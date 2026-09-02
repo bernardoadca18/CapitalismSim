@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>CapitalismSim.Simulation.Persistence.Tests</RootNamespace>
+    <AssemblyName>CapitalismSim.Simulation.Persistence.Tests</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Simulation.Core\Simulation.Core.csproj" />
+    <ProjectReference Include="..\..\src\Simulation.Persistence\Simulation.Persistence.csproj" />
+  </ItemGroup>
+
+</Project>

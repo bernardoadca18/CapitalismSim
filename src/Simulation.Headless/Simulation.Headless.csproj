@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>CapitalismSim.Simulation.Headless</RootNamespace>
+    <AssemblyName>CapitalismSim.Simulation.Headless</AssemblyName>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Simulation.Core\Simulation.Core.csproj" />
+    <ProjectReference Include="..\Simulation.Persistence\Simulation.Persistence.csproj" />
+  </ItemGroup>
+
+</Project>

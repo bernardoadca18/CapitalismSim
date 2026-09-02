@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>CapitalismSim.Simulation.Core</RootNamespace>
+    <AssemblyName>CapitalismSim.Simulation.Core</AssemblyName>
+    <!--
+      Simulation.Core is a pure C# library. It must never reference any
+      other project in this repository (see docs/ARCHITECTURE.md and
+      docs/adr/0002-engine-independent-core.md).
+    -->
+  </PropertyGroup>
+
+</Project>

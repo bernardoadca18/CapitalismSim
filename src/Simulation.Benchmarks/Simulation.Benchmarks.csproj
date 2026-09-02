@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>CapitalismSim.Simulation.Benchmarks</RootNamespace>
+    <AssemblyName>CapitalismSim.Simulation.Benchmarks</AssemblyName>
+    <!-- BenchmarkDotNet emits IL and does reflection internally; that is
+         expected and does not represent a hot-path concern in our own code. -->
+    <NoWarn>$(NoWarn);CA1050</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="BenchmarkDotNet" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Simulation.Core\Simulation.Core.csproj" />
+    <ProjectReference Include="..\Simulation.Persistence\Simulation.Persistence.csproj" />
+  </ItemGroup>
+
+</Project>
