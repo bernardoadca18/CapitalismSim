@@ -102,6 +102,80 @@ public sealed class DeterministicRandomTests
     {
         var rng = new DeterministicRandom(seed: 1UL, streamSelector: 1UL);
         Assert.Throws<ArgumentOutOfRangeException>(() => rng.NextInt32(10, 10));
+        Assert.Throws<ArgumentOutOfRangeException>(() => rng.NextInt32(20, 10));
+    }
+
+    [Fact]
+    public void NextInt32_PositiveRange_StaysWithinBounds()
+    {
+        var rng = new DeterministicRandom(seed: 7UL, streamSelector: 3UL);
+        for (int i = 0; i < 1000; i++)
+        {
+            int value = rng.NextInt32(100, 200);
+            Assert.InRange(value, 100, 199);
+        }
+    }
+
+    [Fact]
+    public void NextInt32_NegativeRange_StaysWithinBounds()
+    {
+        var rng = new DeterministicRandom(seed: 11UL, streamSelector: 2UL);
+        for (int i = 0; i < 1000; i++)
+        {
+            int value = rng.NextInt32(-200, -100);
+            Assert.InRange(value, -200, -101);
+        }
+    }
+
+    [Fact]
+    public void NextInt32_CrossZeroRange_StaysWithinBounds()
+    {
+        var rng = new DeterministicRandom(seed: 13UL, streamSelector: 5UL);
+        for (int i = 0; i < 1000; i++)
+        {
+            int value = rng.NextInt32(-100, 100);
+            Assert.InRange(value, -100, 99);
+        }
+    }
+
+    [Fact]
+    public void NextInt32_NearFullInt32Range_DoesNotOverflow()
+    {
+        // This range spans nearly the entire int range and would overflow
+        // if the subtraction were done in int arithmetic.
+        var rng = new DeterministicRandom(seed: 17UL, streamSelector: 8UL);
+        int minInclusive = int.MinValue;
+        int maxExclusive = int.MaxValue;
+
+        for (int i = 0; i < 1000; i++)
+        {
+            int value = rng.NextInt32(minInclusive, maxExclusive);
+            Assert.InRange(value, minInclusive, maxExclusive - 1);
+        }
+    }
+
+    [Fact]
+    public void NextInt32_SameSeed_Deterministic()
+    {
+        var a = new DeterministicRandom(seed: 99UL, streamSelector: 1UL);
+        var b = new DeterministicRandom(seed: 99UL, streamSelector: 1UL);
+
+        for (int i = 0; i < 100; i++)
+        {
+            Assert.Equal(a.NextInt32(-1000, 1000), b.NextInt32(-1000, 1000));
+        }
+    }
+
+    [Fact]
+    public void NextInt32_FullInt32Range_IsValid()
+    {
+        // [int.MinValue, int.MaxValue) should be valid - this tests the full range works
+        var rng = new DeterministicRandom(seed: 21UL, streamSelector: 6UL);
+        for (int i = 0; i < 1000; i++)
+        {
+            int value = rng.NextInt32(int.MinValue, int.MaxValue);
+            Assert.InRange(value, int.MinValue, int.MaxValue - 1);
+        }
     }
 
     [Fact]

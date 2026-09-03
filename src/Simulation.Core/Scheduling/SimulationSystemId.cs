@@ -12,7 +12,7 @@ public readonly record struct SimulationSystemId
 
     public SimulationSystemId(string value)
     {
-        ArgumentException.ThrowIfNullOrEmpty(value);
+        ArgumentException.ThrowIfNullOrWhiteSpace(value);
         Value = value;
     }
 

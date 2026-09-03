@@ -57,7 +57,7 @@ static int RunSingle(HeadlessOptions options)
     Console.WriteLine($"Simulated duration:       {run.Engine.Clock.Current.Since(start)}");
     Console.WriteLine($"Systems executed:         {run.Engine.Metrics.SystemExecutionCount}");
     Console.WriteLine($"Events emitted:           {run.Engine.Events.TotalPublishedCount}");
-    Console.WriteLine($"Commands dispatched:      {run.Engine.Metrics.CommandCount}");
+    Console.WriteLine($"Commands dispatched:      {run.Engine.Commands.TotalDispatchCount}");
     Console.WriteLine($"Entities allocated:       {run.Engine.EntityIds.NextValue - 1}");
     Console.WriteLine($"Deterministic fingerprint: {run.ComputeFingerprint()}");
     Console.WriteLine($"Wall time:                {stopwatch.Elapsed}");

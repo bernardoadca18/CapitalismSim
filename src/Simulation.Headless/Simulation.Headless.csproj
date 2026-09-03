@@ -4,7 +4,6 @@
     <OutputType>Exe</OutputType>
     <RootNamespace>CapitalismSim.Simulation.Headless</RootNamespace>
     <AssemblyName>CapitalismSim.Simulation.Headless</AssemblyName>
-    <InvariantGlobalization>true</InvariantGlobalization>
   </PropertyGroup>
 
   <ItemGroup>

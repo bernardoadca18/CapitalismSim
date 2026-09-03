@@ -111,23 +111,27 @@ public sealed class DeterministicRandom
                 "maxExclusive must be greater than minInclusive.");
         }
 
-        // Handle the full int range correctly by using unsigned arithmetic.
+        // Handle the full int range correctly by using wide arithmetic BEFORE subtraction.
         // When minInclusive is negative and maxExclusive is positive,
-        // the difference can exceed int.MaxValue and would overflow if cast to uint directly.
-        // We compute the range as an unsigned value that correctly represents the span.
-        ulong range = (ulong)(maxExclusive - minInclusive);
+        // the difference can exceed int.MaxValue and would overflow if computed as int.
+        // We cast to long first, then subtract, ensuring no overflow for any valid int range.
+        long span = (long)maxExclusive - minInclusive;
+        ulong range = checked((ulong)span);
 
         if (range <= uint.MaxValue)
         {
             // Fast path: range fits in 32 bits
             uint bounded = NextBoundedUInt32((uint)range);
-            return minInclusive + (int)bounded;
+            // Use wide arithmetic for the final addition to avoid overflow
+            long result = (long)minInclusive + bounded;
+            return checked((int)result);
         }
 
         // Slow path: full int range [int.MinValue, int.MaxValue)
         // This is extremely rare in practice but must be correct.
         ulong sample = NextBoundedUInt64(range);
-        return minInclusive + (int)sample;
+        long finalResult = (long)minInclusive + checked((long)sample);
+        return checked((int)finalResult);
     }
 
     /// <summary>Returns a pseudo-random double in the range [0.0, 1.0).</summary>

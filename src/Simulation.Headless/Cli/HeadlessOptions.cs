@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace CapitalismSim.Simulation.Headless.Cli;
 
 /// <summary>
@@ -30,10 +32,10 @@ public sealed class HeadlessOptions
             switch (args[i])
             {
                 case "--seed":
-                    seed = ulong.Parse(RequireValue(args, ref i, "--seed"));
+                    seed = ulong.Parse(RequireValue(args, ref i, "--seed"), CultureInfo.InvariantCulture);
                     break;
                 case "--duration-days":
-                    durationDays = int.Parse(RequireValue(args, ref i, "--duration-days"));
+                    durationDays = int.Parse(RequireValue(args, ref i, "--duration-days"), CultureInfo.InvariantCulture);
                     break;
                 case "--save":
                     savePath = RequireValue(args, ref i, "--save");

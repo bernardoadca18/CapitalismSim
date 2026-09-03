@@ -111,15 +111,13 @@ that work.
 
 ## Persistence boundary
 
-`Simulation.Core` exposes a small, generic `ExtensionState` bag on
-`SimulationEngine` (`Dictionary<string, string>`) that it never
-interprets. `Simulation.Persistence` serializes this verbatim as part of
-a `KernelSnapshotDto`, alongside the handful of fields Core state Core
-actually owns (world seed, clock instant, entity id allocator cursor).
-This lets callers outside the kernel (today: diagnostic probe systems in
-`Simulation.Headless` and in tests) contribute their own persisted state
-without Core or Persistence needing to know what a "Population" or
-"Company" is. See `PERSISTENCE_STRATEGY.md`.
+`Simulation.Core` exposes its kernel state (world seed, clock instant,
+entity ID allocator cursor, event sequence number) via `KernelSnapshotDto`.
+The headless runner's probe systems capture their own state separately
+via `ProbeSystemSnapshot` and store it in the snapshot's `ProbeSystems`
+dictionary, keyed by system ID. This keeps Core independent of specific
+gameplay domains while allowing external systems to persist their state.
+See `PERSISTENCE_STRATEGY.md`.
 
 ## Dependency policy (external packages)
 

@@ -61,12 +61,12 @@ public sealed class SimulationRun
 
         if (snapshot.ProbeSystems.TryGetValue("probe.minute", out var minuteDto))
         {
-            run.MinuteProbe.RestoreFrom(FromDto(minuteDto));
+            run.MinuteProbe.RestoreFrom(FromDto("probe.minute", minuteDto));
         }
 
         if (snapshot.ProbeSystems.TryGetValue("probe.hour", out var hourDto))
         {
-            run.HourProbe.RestoreFrom(FromDto(hourDto));
+            run.HourProbe.RestoreFrom(FromDto("probe.hour", hourDto));
         }
 
         return run;
@@ -98,9 +98,9 @@ public sealed class SimulationRun
         Accumulator = snapshot.Accumulator,
     };
 
-    private static ProbeSystemSnapshot FromDto(ProbeSystemSnapshotDto dto) => new()
+    private static ProbeSystemSnapshot FromDto(string systemId, ProbeSystemSnapshotDto dto) => new()
     {
-        SystemId = string.Empty,
+        SystemId = systemId,
         RandomState = dto.RandomState,
         RandomIncrement = dto.RandomIncrement,
         Accumulator = dto.Accumulator,

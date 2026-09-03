@@ -20,7 +20,7 @@ public readonly record struct RandomDomain
 
     public RandomDomain(string name)
     {
-        ArgumentException.ThrowIfNullOrEmpty(name);
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
         Name = name;
     }
 

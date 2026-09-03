@@ -25,6 +25,13 @@ public readonly struct EntityId : IEquatable<EntityId>, IComparable<EntityId>
 
     public EntityId(long value)
     {
+        if (value < 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(value),
+                value,
+                "EntityId must be non-negative. Use EntityId.None for 'no entity'.");
+        }
         Value = value;
     }
 

@@ -145,35 +145,56 @@ public sealed class SimulationEngineTests
     }
 
     /// <summary>
+    /// A system that throws on its first tick only.
+    /// Used to verify reentrancy guard is released after exception.
+    /// </summary>
+    private sealed class OneShotThrowingSystem : ISimulationSystem
+    {
+        public OneShotThrowingSystem(string id) => Id = new SimulationSystemId(id);
+
+        public SimulationSystemId Id { get; }
+
+        private bool _hasThrown;
+
+        public void Tick(in SimulationTickContext context)
+        {
+            if (!_hasThrown)
+            {
+                _hasThrown = true;
+                throw new InvalidOperationException("Intentional test failure.");
+            }
+            // Subsequent ticks do nothing
+        }
+    }
+
+    /// <summary>
     /// P1.6: Verifies that when a system.Tick throws, the exception propagates,
-    /// the reentrancy guard is released, and subsequent advances work.
+    /// the reentrancy guard is released, and subsequent advances work on the SAME engine.
     /// </summary>
     [Fact]
     public void TickThrows_ReentrancyGuardReleased_CanAdvanceAgain()
     {
+        // Use a one-shot throwing system that only throws on first tick
         var engine = new SimulationEngine(new SimulationEngineOptions { WorldSeed = 1UL });
-        var throwing = new ThrowingSystem("thrower");
+        var throwing = new OneShotThrowingSystem("thrower");
         var counting = new CountingSystem("counter");
-        engine.Scheduler.Register(throwing, new SchedulingPolicy(SimulationInstant.Epoch, SimulationDuration.FromMinutes(2)));
-        engine.Scheduler.Register(counting, new SchedulingPolicy(SimulationInstant.Epoch, SimulationDuration.FromMinutes(2)));
+        // First occurrence at t=60 (not Epoch, due to boundary semantics (previous, new])
+        engine.Scheduler.Register(throwing, new SchedulingPolicy(new SimulationInstant(60), SimulationDuration.FromMinutes(2)));
+        engine.Scheduler.Register(counting, new SchedulingPolicy(new SimulationInstant(60), SimulationDuration.FromMinutes(2)));
 
-        // First advance: thrower throws at t=0 (first occurrence)
+        // First advance: thrower throws at t=60 (first occurrence in window (0, 120])
         var ex = Assert.Throws<InvalidOperationException>(() => engine.AdvanceBy(SimulationDuration.FromMinutes(2)));
         Assert.Contains("Intentional test failure", ex.Message);
 
-        // Clock should be at t=0 (where the exception occurred)
-        Assert.Equal(0, engine.Clock.Current.TotalSeconds);
+        // Clock should be at t=60 (where the exception occurred)
+        Assert.Equal(60, engine.Clock.Current.TotalSeconds);
 
-        // CRITICAL: Reentrancy guard must be released - we can call Advance again
-        // Remove the throwing system and advance again
-        // Note: We can't unregister, but we can create a new engine to verify the pattern
-        var engine2 = new SimulationEngine(new SimulationEngineOptions { WorldSeed = 1UL });
-        var counting2 = new CountingSystem("counter");
-        engine2.Scheduler.Register(counting2, new SchedulingPolicy(SimulationInstant.Epoch, SimulationDuration.FromMinutes(1)));
+        // CRITICAL: Reentrancy guard must be released - we can call Advance again on the SAME engine
+        // The throwing system will not throw again (one-shot), so next advance should work
+        engine.AdvanceBy(SimulationDuration.FromMinutes(2));
 
-        // This should work - if reentrancy guard wasn't released, this would throw
-        engine2.AdvanceBy(SimulationDuration.FromMinutes(5));
-        Assert.Equal(5, counting2.TickCount);
+        // Counting system should have ticked at t=120 (its first occurrence in window (60, 120])
+        Assert.Equal(1, counting.TickCount);
     }
 
     /// <summary>

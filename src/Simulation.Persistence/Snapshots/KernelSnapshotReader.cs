@@ -69,7 +69,7 @@ public static class KernelSnapshotReader
         {
             foreach (var kvp in snapshot.ProbeSystems)
             {
-                if (string.IsNullOrEmpty(kvp.Key))
+                if (string.IsNullOrWhiteSpace(kvp.Key))
                 {
                     throw new SnapshotFormatException(
                         "Snapshot contains a probe system with a null or empty system id.");
