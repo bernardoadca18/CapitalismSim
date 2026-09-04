@@ -1,9 +1,11 @@
 using CapitalismSim.Simulation.Core.Commands;
 using CapitalismSim.Simulation.Core.Diagnostics;
+using CapitalismSim.Simulation.Core.Economics;
 using CapitalismSim.Simulation.Core.Entities;
 using CapitalismSim.Simulation.Core.Events;
 using CapitalismSim.Simulation.Core.Randomness;
 using CapitalismSim.Simulation.Core.Scheduling;
+using CapitalismSim.Simulation.Core.State;
 using CapitalismSim.Simulation.Core.Time;
 
 namespace CapitalismSim.Simulation.Core.Engine;
@@ -46,6 +48,7 @@ public sealed class SimulationEngine
         Events = new SimulationEventBus();
         Metrics = new SimulationMetrics();
         Diagnostics = options.DiagnosticSink ?? NullDiagnosticSink.Instance;
+        State = new SimulationState(options.Currency);
     }
 
     /// <summary>The root seed this world was created with.</summary>
@@ -74,6 +77,9 @@ public sealed class SimulationEngine
 
     /// <summary>Where the kernel writes diagnostic text, if anywhere.</summary>
     public IDiagnosticSink Diagnostics { get; }
+
+    /// <summary>The root aggregate for all simulation domain state.</summary>
+    public SimulationState State { get; }
 
     /// <summary>
     /// Advances the simulation by a fixed duration, running every due
@@ -118,7 +124,7 @@ public sealed class SimulationEngine
         {
             SimulationInstant previous = Clock.Current;
 
-            long executed = Scheduler.RunDueOccurrences(previous, targetInstant, Clock);
+            long executed = Scheduler.RunDueOccurrences(previous, targetInstant, Clock, State);
 
             // After all occurrences have run, advance the clock to the target instant.
             // This ensures the clock is at the correct final state after the advance.
@@ -147,4 +153,7 @@ public sealed class SimulationEngineOptions
 
     /// <summary>Optional sink for kernel diagnostic messages.</summary>
     public IDiagnosticSink? DiagnosticSink { get; init; }
+
+    /// <summary>The currency for the simulation's monetary ledger. Defaults to USD.</summary>
+    public CurrencyCode Currency { get; init; } = CurrencyCode.USD;
 }

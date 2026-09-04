@@ -120,11 +120,13 @@ public sealed class HouseholdTests
 public sealed class PopulationCohortTests
 {
     [Fact]
-    public void Constructor_SetsCountAndHouseholdId()
+    public void Constructor_SetsIdCountAndHouseholdId()
     {
+        var cohortId = new PopulationCohortId(new EntityId(1));
         var householdId = new HouseholdId(new EntityId(10));
-        var cohort = new PopulationCohort(500L, householdId);
+        var cohort = new PopulationCohort(cohortId, 500L, householdId);
 
+        Assert.Equal(cohortId, cohort.Id);
         Assert.Equal(500L, cohort.Count);
         Assert.Equal(householdId, cohort.HouseholdId);
     }
@@ -132,55 +134,87 @@ public sealed class PopulationCohortTests
     [Fact]
     public void Constructor_NegativeCount_Throws()
     {
+        var cohortId = new PopulationCohortId(new EntityId(1));
         var householdId = new HouseholdId(new EntityId(10));
 
-        Assert.Throws<ArgumentOutOfRangeException>(() => new PopulationCohort(-1L, householdId));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new PopulationCohort(cohortId, -1L, householdId));
+    }
+
+    [Fact]
+    public void Constructor_NoHousehold_AllowsNone()
+    {
+        var cohortId = new PopulationCohortId(new EntityId(1));
+        var cohort = new PopulationCohort(cohortId, 100L, HouseholdId.None);
+
+        Assert.Equal(cohortId, cohort.Id);
+        Assert.Equal(100L, cohort.Count);
+        Assert.True(cohort.HouseholdId.IsNone);
     }
 
     [Fact]
     public void Empty_CreatesZeroCountCohort()
     {
-        var householdId = new HouseholdId(new EntityId(10));
-        var empty = PopulationCohort.Empty(householdId);
+        var cohortId = new PopulationCohortId(new EntityId(1));
+        var empty = PopulationCohort.Empty(cohortId);
 
         Assert.Equal(0L, empty.Count);
         Assert.True(empty.IsEmpty);
-        Assert.Equal(householdId, empty.HouseholdId);
+        Assert.Equal(cohortId, empty.Id);
     }
 
     [Fact]
     public void WithCount_CreatesNewCohortWithDifferentCount()
     {
+        var cohortId = new PopulationCohortId(new EntityId(1));
         var householdId = new HouseholdId(new EntityId(10));
-        var original = new PopulationCohort(100L, householdId);
+        var original = new PopulationCohort(cohortId, 100L, householdId);
 
         var updated = original.WithCount(200L);
 
         Assert.Equal(200L, updated.Count);
         Assert.Equal(householdId, updated.HouseholdId);
+        Assert.Equal(cohortId, updated.Id);
         Assert.Equal(100L, original.Count); // Original unchanged
     }
 
     [Fact]
-    public void Addition_MergesCohortsOfSameHousehold()
+    public void WithHouseholdId_CreatesNewCohortWithDifferentHousehold()
     {
+        var cohortId = new PopulationCohortId(new EntityId(1));
+        var householdId1 = new HouseholdId(new EntityId(10));
+        var householdId2 = new HouseholdId(new EntityId(20));
+        var original = new PopulationCohort(cohortId, 100L, householdId1);
+
+        var updated = original.WithHouseholdId(householdId2);
+
+        Assert.Equal(householdId2, updated.HouseholdId);
+        Assert.Equal(100L, updated.Count);
+        Assert.Equal(cohortId, updated.Id);
+    }
+
+    [Fact]
+    public void Addition_MergesCohortsOfSameId()
+    {
+        var cohortId = new PopulationCohortId(new EntityId(1));
         var householdId = new HouseholdId(new EntityId(10));
-        var a = new PopulationCohort(100L, householdId);
-        var b = new PopulationCohort(50L, householdId);
+        var a = new PopulationCohort(cohortId, 100L, householdId);
+        var b = new PopulationCohort(cohortId, 50L, householdId);
 
         var sum = a + b;
 
         Assert.Equal(150L, sum.Count);
+        Assert.Equal(cohortId, sum.Id);
         Assert.Equal(householdId, sum.HouseholdId);
     }
 
     [Fact]
-    public void Addition_DifferentHouseholds_Throws()
+    public void Addition_DifferentCohortIds_Throws()
     {
-        var h1 = new HouseholdId(new EntityId(10));
-        var h2 = new HouseholdId(new EntityId(20));
-        var a = new PopulationCohort(100L, h1);
-        var b = new PopulationCohort(50L, h2);
+        var id1 = new PopulationCohortId(new EntityId(1));
+        var id2 = new PopulationCohortId(new EntityId(2));
+        var householdId = new HouseholdId(new EntityId(10));
+        var a = new PopulationCohort(id1, 100L, householdId);
+        var b = new PopulationCohort(id2, 50L, householdId);
 
         Assert.Throws<InvalidOperationException>(() => a + b);
     }
@@ -188,10 +222,11 @@ public sealed class PopulationCohortTests
     [Fact]
     public void Equality_IsValueBased()
     {
+        var cohortId = new PopulationCohortId(new EntityId(1));
         var householdId = new HouseholdId(new EntityId(10));
-        var a = new PopulationCohort(100L, householdId);
-        var b = new PopulationCohort(100L, householdId);
-        var c = new PopulationCohort(200L, householdId);
+        var a = new PopulationCohort(cohortId, 100L, householdId);
+        var b = new PopulationCohort(cohortId, 100L, householdId);
+        var c = new PopulationCohort(cohortId, 200L, householdId);
 
         Assert.Equal(a, b);
         Assert.True(a == b);

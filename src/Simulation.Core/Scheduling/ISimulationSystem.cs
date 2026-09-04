@@ -30,10 +30,14 @@ public interface ISimulationSystem
 /// </summary>
 public readonly struct SimulationTickContext
 {
-    public SimulationTickContext(SimulationInstant scheduledInstant, long occurrenceNumber)
+    public SimulationTickContext(
+        SimulationInstant scheduledInstant,
+        long occurrenceNumber,
+        State.SimulationState state)
     {
         ScheduledInstant = scheduledInstant;
         OccurrenceNumber = occurrenceNumber;
+        State = state;
     }
 
     /// <summary>The exact logical instant this occurrence was scheduled for.</summary>
@@ -45,4 +49,10 @@ public readonly struct SimulationTickContext
     /// and for probe/test systems.
     /// </summary>
     public long OccurrenceNumber { get; }
+
+    /// <summary>
+    /// The root aggregate for all simulation domain state.
+    /// Systems read from and mutate this state during their ticks.
+    /// </summary>
+    public State.SimulationState State { get; }
 }

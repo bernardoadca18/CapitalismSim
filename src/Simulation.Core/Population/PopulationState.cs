@@ -25,7 +25,8 @@ public sealed class PopulationState
 {
     private readonly Dictionary<PersonId, Person> _individuals = new();
     private readonly Dictionary<HouseholdId, Household> _households = new();
-    private readonly Dictionary<HouseholdId, PopulationCohort> _cohorts = new();
+    private readonly Dictionary<PopulationCohortId, PopulationCohort> _cohorts = new();
+    private readonly Dictionary<HouseholdId, HouseholdNeedsState> _householdNeeds = new();
 
     /// <summary>Number of detailed individuals tracked.</summary>
     public int IndividualCount => _individuals.Count;
@@ -59,6 +60,11 @@ public sealed class PopulationState
     /// <summary>
     /// Adds a person to the population.
     /// </summary>
+    /// <remarks>
+    /// This operation is atomic: either the person is fully added (including household
+    /// membership if specified) or no state is changed. Pre-validates all constraints
+    /// before any mutation.
+    /// </remarks>
     public void AddPerson(Person person)
     {
         if (person.IsNone)
@@ -71,16 +77,27 @@ public sealed class PopulationState
             throw new InvalidOperationException($"Person {person.Id} already exists in population.");
         }
 
-        _individuals[person.Id] = person;
-
-        // Also add to household if specified
+        // Pre-validate household membership before any mutation
+        Household? household = null;
         if (!person.HouseholdId.IsNone)
         {
-            if (_households.TryGetValue(person.HouseholdId, out var household))
+            household = GetHousehold(person.HouseholdId);
+            if (household is null)
             {
-                household.AddMember(person.Id);
+                throw new InvalidOperationException(
+                    $"Cannot add person {person.Id} to non-existent household {person.HouseholdId}.");
+            }
+
+            if (household.HasMember(person.Id))
+            {
+                throw new InvalidOperationException(
+                    $"Person {person.Id} is already a member of household {person.HouseholdId}.");
             }
         }
+
+        // All validations passed - perform mutations atomically
+        _individuals[person.Id] = person;
+        household?.AddMember(person.Id);
     }
 
     /// <summary>
@@ -95,6 +112,93 @@ public sealed class PopulationState
     /// Checks if a person exists in the population.
     /// </summary>
     public bool PersonExists(PersonId personId) => _individuals.ContainsKey(personId);
+
+    /// <summary>
+    /// Removes a person from the population.
+    /// </summary>
+    /// <remarks>
+    /// This operation is atomic: either the person is fully removed (including from
+    /// household membership) or no state is changed. Pre-validates all constraints
+    /// before any mutation.
+    /// </remarks>
+    public void RemovePerson(PersonId personId)
+    {
+        if (personId.IsNone)
+        {
+            throw new ArgumentException("Cannot remove PersonId.None from population.", nameof(personId));
+        }
+
+        var person = GetPerson(personId);
+        if (person.IsNone)
+        {
+            throw new InvalidOperationException($"Person {personId} does not exist in population.");
+        }
+
+        // Pre-validate household membership removal
+        Household? household = null;
+        if (!person.HouseholdId.IsNone)
+        {
+            household = GetHousehold(person.HouseholdId);
+            if (household is not null && !household.HasMember(personId))
+            {
+                throw new InvalidOperationException(
+                    $"Person {personId} is not a member of household {person.HouseholdId}.");
+            }
+        }
+
+        // All validations passed - perform mutations atomically
+        _individuals.Remove(personId);
+        household?.RemoveMember(personId);
+    }
+
+    /// <summary>
+    /// Atomically adds multiple people to the population.
+    /// Pre-validates all people before any mutation.
+    /// </summary>
+    public void AddPeople(IReadOnlyList<Person> people)
+    {
+        ArgumentNullException.ThrowIfNull(people);
+
+        // Pre-validate all people
+        foreach (var person in people)
+        {
+            if (person.IsNone)
+            {
+                throw new ArgumentException("Cannot add Person.None to population.", nameof(people));
+            }
+
+            if (_individuals.ContainsKey(person.Id))
+            {
+                throw new InvalidOperationException($"Person {person.Id} already exists in population.");
+            }
+
+            if (!person.HouseholdId.IsNone)
+            {
+                var household = GetHousehold(person.HouseholdId);
+                if (household is null)
+                {
+                    throw new InvalidOperationException(
+                        $"Cannot add person {person.Id} to non-existent household {person.HouseholdId}.");
+                }
+
+                if (household.HasMember(person.Id))
+                {
+                    throw new InvalidOperationException(
+                        $"Person {person.Id} is already a member of household {person.HouseholdId}.");
+                }
+            }
+        }
+
+        // All validations passed - perform mutations atomically
+        foreach (var person in people)
+        {
+            _individuals[person.Id] = person;
+            if (!person.HouseholdId.IsNone)
+            {
+                GetHousehold(person.HouseholdId)?.AddMember(person.Id);
+            }
+        }
+    }
 
     /// <summary>
     /// Creates a new household with the given account.
@@ -125,30 +229,103 @@ public sealed class PopulationState
     /// <summary>
     /// Adds or updates a population cohort.
     /// </summary>
-    public void SetCohort(HouseholdId householdId, PopulationCohort cohort)
+    public void SetCohort(PopulationCohort cohort)
     {
-        if (cohort.HouseholdId != householdId)
+        if (cohort.Id.IsNone)
         {
-            throw new ArgumentException(
-                $"Cohort's household ID ({cohort.HouseholdId}) doesn't match key ({householdId}).",
-                nameof(cohort));
+            throw new ArgumentException("Cannot set a cohort with PopulationCohortId.None.", nameof(cohort));
         }
 
-        _cohorts[householdId] = cohort;
+        _cohorts[cohort.Id] = cohort;
     }
 
     /// <summary>
-    /// Gets a cohort by household ID. Returns empty cohort if not found.
+    /// Gets a cohort by ID. Returns empty cohort if not found.
     /// </summary>
-    public PopulationCohort GetCohort(HouseholdId householdId)
+    public PopulationCohort GetCohort(PopulationCohortId cohortId)
     {
-        return _cohorts.TryGetValue(householdId, out var cohort)
+        return _cohorts.TryGetValue(cohortId, out var cohort)
             ? cohort
-            : PopulationCohort.Empty(householdId);
+            : PopulationCohort.Empty(cohortId);
     }
 
     /// <summary>
     /// Removes a cohort. Returns true if it existed.
     /// </summary>
-    public bool RemoveCohort(HouseholdId householdId) => _cohorts.Remove(householdId);
+    public bool RemoveCohort(PopulationCohortId cohortId) => _cohorts.Remove(cohortId);
+
+    /// <summary>
+    /// Checks if a cohort exists.
+    /// </summary>
+    public bool CohortExists(PopulationCohortId cohortId) => _cohorts.ContainsKey(cohortId);
+
+    /// <summary>
+    /// Gets all cohort IDs.
+    /// </summary>
+    public IEnumerable<PopulationCohortId> GetAllCohortIds() => _cohorts.Keys;
+
+    #region Household Needs State
+
+    /// <summary>
+    /// Sets the needs state for a household.
+    /// </summary>
+    public void SetHouseholdNeedsState(HouseholdNeedsState needsState)
+    {
+        ArgumentNullException.ThrowIfNull(needsState);
+        _householdNeeds[needsState.HouseholdId] = needsState;
+    }
+
+    /// <summary>
+    /// Gets the needs state for a household. Returns null if not tracked.
+    /// </summary>
+    public HouseholdNeedsState? GetHouseholdNeedsState(HouseholdId householdId)
+    {
+        return _householdNeeds.TryGetValue(householdId, out var state) ? state : null;
+    }
+
+    /// <summary>
+    /// Gets all household IDs that have needs state tracked.
+    /// </summary>
+    public IEnumerable<HouseholdId> GetAllHouseholdIdsWithNeedsState() => _householdNeeds.Keys;
+
+    #endregion
+
+    /// <summary>
+    /// Creates a deep copy of this population state.
+    /// </summary>
+    public PopulationState Clone()
+    {
+        var clone = new PopulationState();
+
+        // Clone households (they have mutable member sets)
+        foreach (var (householdId, household) in _households)
+        {
+            var clonedHousehold = new Household(household.Id, household.AccountId);
+            foreach (var memberId in household.Members)
+            {
+                clonedHousehold.AddMember(memberId);
+            }
+            clone._households[householdId] = clonedHousehold;
+        }
+
+        // Clone individuals (structs are copied by value)
+        foreach (var (personId, person) in _individuals)
+        {
+            clone._individuals[personId] = person;
+        }
+
+        // Clone cohorts (structs are copied by value)
+        foreach (var (cohortId, cohort) in _cohorts)
+        {
+            clone._cohorts[cohortId] = cohort;
+        }
+
+        // Clone household needs states (classes with mutable state)
+        foreach (var (householdId, needsState) in _householdNeeds)
+        {
+            clone._householdNeeds[householdId] = needsState.Clone();
+        }
+
+        return clone;
+    }
 }

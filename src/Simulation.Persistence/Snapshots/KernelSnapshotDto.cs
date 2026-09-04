@@ -76,6 +76,12 @@ public sealed record PersonSnapshotDto
 
     /// <summary>The household this person belongs to (0 if none).</summary>
     public required long HouseholdId { get; init; }
+
+    /// <summary>The person's age in simulation years.</summary>
+    public required int Age { get; init; }
+
+    /// <summary>The person's personal account ID (0 if none).</summary>
+    public required long PersonalAccountId { get; init; }
 }
 
 /// <summary>Snapshot of a household.</summary>
@@ -94,11 +100,14 @@ public sealed record HouseholdSnapshotDto
 /// <summary>Snapshot of a population cohort (aggregated population group).</summary>
 public sealed record CohortSnapshotDto
 {
-    /// <summary>The household this cohort belongs to (0 if unattached).</summary>
-    public required long HouseholdId { get; init; }
+    /// <summary>The cohort's unique entity ID.</summary>
+    public required long CohortId { get; init; }
 
     /// <summary>Number of individuals in this cohort.</summary>
     public required long Count { get; init; }
+
+    /// <summary>The household this cohort belongs to (0 if unattached).</summary>
+    public required long HouseholdId { get; init; }
 }
 
 /// <summary>
@@ -111,6 +120,12 @@ public sealed record MoneyLedgerSnapshotDto
 
     /// <summary>All accounts in the ledger.</summary>
     public required IReadOnlyList<AccountSnapshotDto> Accounts { get; init; }
+
+    /// <summary>Total money created via ExternalCredit (for supply accounting).</summary>
+    public required long TotalExternalCredits { get; init; }
+
+    /// <summary>Total money destroyed via ExternalDebit (for supply accounting).</summary>
+    public required long TotalExternalDebits { get; init; }
 }
 
 /// <summary>Snapshot of a monetary account.</summary>
@@ -118,6 +133,9 @@ public sealed record AccountSnapshotDto
 {
     /// <summary>The account's entity ID.</summary>
     public required long AccountId { get; init; }
+
+    /// <summary>The owner entity ID of this account.</summary>
+    public required long OwnerId { get; init; }
 
     /// <summary>The balance in minor units (e.g., cents).</summary>
     public required long BalanceMinorUnits { get; init; }

@@ -92,6 +92,9 @@ public sealed class SimulationScheduler
     /// occurrence's scheduled instant, ensuring <see cref="SimulationClock.Current"/>
     /// equals <see cref="SimulationTickContext.ScheduledInstant"/> during the tick.
     /// </param>
+    /// <param name="state">
+    /// The root aggregate for all simulation domain state, passed to each system tick.
+    /// </param>
     /// <returns>The number of occurrences executed.</returns>
     /// <remarks>
     /// <para>
@@ -107,7 +110,11 @@ public sealed class SimulationScheduler
     /// deterministic. Transactional semantics would be a future consideration if required.
     /// </para>
     /// </remarks>
-    public long RunDueOccurrences(SimulationInstant previousInstant, SimulationInstant newInstant, SimulationClock clock)
+    public long RunDueOccurrences(
+        SimulationInstant previousInstant,
+        SimulationInstant newInstant,
+        SimulationClock clock,
+        State.SimulationState state)
     {
         if (newInstant < previousInstant)
         {
@@ -169,7 +176,7 @@ public sealed class SimulationScheduler
 
             // Execute the tick.
             long occurrenceNumber = min.CurrentOccurrenceIndex + 1; // 1-based
-            var context = new SimulationTickContext(min.ScheduledInstant, occurrenceNumber);
+            var context = new SimulationTickContext(min.ScheduledInstant, occurrenceNumber, state);
             _systems[min.SystemIndex].System.Tick(in context);
             executedCount++;
 

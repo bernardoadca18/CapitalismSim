@@ -85,4 +85,16 @@ public sealed class HouseholdNeedsState
 
         return TotalNeedsMonthly - SatisfiedNeedsMonthly;
     }
+
+    /// <summary>
+    /// Creates a deep copy of this needs state.
+    /// </summary>
+    public HouseholdNeedsState Clone()
+    {
+        return new HouseholdNeedsState(HouseholdId, NeedsProfile, memberCount: 0)
+        {
+            TotalNeedsMonthly = TotalNeedsMonthly,
+            SatisfiedNeedsMonthly = SatisfiedNeedsMonthly,
+        };
+    }
 }

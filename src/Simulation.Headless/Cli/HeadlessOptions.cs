@@ -19,6 +19,8 @@ public sealed class HeadlessOptions
 
     public bool VerifyDeterminism { get; init; }
 
+    public bool Phase2 { get; init; }
+
     public static HeadlessOptions Parse(string[] args)
     {
         ulong seed = 123456UL;
@@ -26,6 +28,7 @@ public sealed class HeadlessOptions
         string? savePath = null;
         string? loadPath = null;
         bool verifyDeterminism = false;
+        bool phase2 = false;
 
         for (int i = 0; i < args.Length; i++)
         {
@@ -45,6 +48,9 @@ public sealed class HeadlessOptions
                     break;
                 case "--verify-determinism":
                     verifyDeterminism = true;
+                    break;
+                case "--phase2":
+                    phase2 = true;
                     break;
                 case "--help":
                 case "-h":
@@ -68,6 +74,7 @@ public sealed class HeadlessOptions
             SavePath = savePath,
             LoadPath = loadPath,
             VerifyDeterminism = verifyDeterminism,
+            Phase2 = phase2,
         };
     }
 
@@ -96,6 +103,7 @@ public sealed class HeadlessOptions
               --save <path>             Save a kernel snapshot to <path> after advancing
               --load <path>             Load a kernel snapshot from <path> before advancing
               --verify-determinism      Run the same configuration twice and compare fingerprints
+              --phase2                   Run Phase 2 scenario with population and basic needs
               --help, -h                Show this message
             """);
     }
