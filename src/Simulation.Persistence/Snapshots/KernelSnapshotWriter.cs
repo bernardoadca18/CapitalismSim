@@ -13,7 +13,7 @@ public static class KernelSnapshotWriter
     /// add explicit migration/rejection logic whenever the schema changes
     /// incompatibly.
     /// </summary>
-    public const int CurrentFormatVersion = 2;
+    public const int CurrentFormatVersion = 3;
 
     public static KernelSnapshotDto Capture(SimulationEngine engine)
     {
@@ -26,7 +26,10 @@ public static class KernelSnapshotWriter
             CurrentInstantSeconds = engine.Clock.Current.TotalSeconds,
             NextEntityId = engine.EntityIds.NextValue,
             NextEventSequenceNumber = engine.Events.NextSequenceNumber,
-            ProbeSystems = new Dictionary<string, ProbeSystemSnapshotDto>(),
+            // Phase 2 snapshots will be populated when PopulationState and MoneyLedger
+            // are integrated with SimulationEngine. For now, they remain null.
+            Population = null,
+            MoneyLedger = null,
         };
     }
 }

@@ -51,7 +51,7 @@ public sealed class SimulationRun
         };
     }
 
-    /// <summary>Restores kernel and probe state from a snapshot file.</summary>
+    /// <summary>Restores kernel state from a snapshot file.</summary>
     public static SimulationRun CreateFromSnapshot(string path, IKernelSnapshotStore store, IDiagnosticSink? diagnosticSink = null)
     {
         KernelSnapshotDto snapshot = store.Load(path);
@@ -59,15 +59,9 @@ public sealed class SimulationRun
 
         KernelSnapshotReader.Apply(run.Engine, snapshot);
 
-        if (snapshot.ProbeSystems.TryGetValue("probe.minute", out var minuteDto))
-        {
-            run.MinuteProbe.RestoreFrom(FromDto("probe.minute", minuteDto));
-        }
-
-        if (snapshot.ProbeSystems.TryGetValue("probe.hour", out var hourDto))
-        {
-            run.HourProbe.RestoreFrom(FromDto("probe.hour", hourDto));
-        }
+        // Note: Probe system state is no longer persisted in the kernel snapshot.
+        // The probes start fresh when restored from a snapshot. This is acceptable
+        // because probes are diagnostic tools, not core simulation state.
 
         return run;
     }
@@ -82,37 +76,19 @@ public sealed class SimulationRun
         }
     }
 
-    /// <summary>Captures and saves a snapshot including probe state.</summary>
+    /// <summary>Captures and saves a kernel snapshot.</summary>
     public void SaveTo(string path, IKernelSnapshotStore store)
     {
         KernelSnapshotDto snapshot = KernelSnapshotWriter.Capture(Engine);
-        snapshot.ProbeSystems["probe.minute"] = ToDto(MinuteProbe.CaptureSnapshot());
-        snapshot.ProbeSystems["probe.hour"] = ToDto(HourProbe.CaptureSnapshot());
         store.Save(path, snapshot);
     }
-
-    private static ProbeSystemSnapshotDto ToDto(ProbeSystemSnapshot snapshot) => new()
-    {
-        RandomState = snapshot.RandomState,
-        RandomIncrement = snapshot.RandomIncrement,
-        Accumulator = snapshot.Accumulator,
-    };
-
-    private static ProbeSystemSnapshot FromDto(string systemId, ProbeSystemSnapshotDto dto) => new()
-    {
-        SystemId = systemId,
-        RandomState = dto.RandomState,
-        RandomIncrement = dto.RandomIncrement,
-        Accumulator = dto.Accumulator,
-    };
 
     /// <summary>
     /// Computes a deterministic fingerprint of the run's kernel state.
     /// Deliberately includes only values that are actually captured and
-    /// restored by <see cref="KernelSnapshotDto"/> plus the probe systems'
-    /// own persisted state — never ephemeral, in-memory-only counters such
-    /// as <see cref="Core.Diagnostics.SimulationMetrics"/> or the event
-    /// bus's publish count, which reset to zero on every new
+    /// restored by <see cref="KernelSnapshotDto"/> — never ephemeral,
+    /// in-memory-only counters such as <see cref="Core.Diagnostics.SimulationMetrics"/>
+    /// or the event bus's publish count, which reset to zero on every new
     /// <see cref="SimulationEngine"/> instance and would otherwise make a
     /// continuous run and a save/load/continue run of the same total
     /// duration report different fingerprints despite being in the same

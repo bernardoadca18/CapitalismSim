@@ -40,13 +40,19 @@ under a `SchedulingPolicy` describing a fixed interval (e.g., "every
 simulated hour, starting at instant zero"). When the engine advances the
 clock from instant A to instant B, the scheduler:
 
-1. Computes, for every registered system, the exact set of occurrence
-   indices whose scheduled instant falls in `(A, B]`.
-2. Collects all due occurrences across all systems into one list.
-3. Sorts that list **deterministically** — first by scheduled instant,
-   then by the system's registration order for ties on the same
-   instant.
-4. Executes them in that order.
+1. For each registered system with due occurrences in `(A, B]`, computes
+   the next occurrence index and pushes it onto a min-heap.
+2. Repeatedly extracts the minimum entry from the heap, executes that
+   occurrence, and pushes the system's next occurrence (if any) back onto
+   the heap.
+3. Orders entries **deterministically** by (scheduled instant, registration
+   order) — registration order breaks ties when multiple systems are due
+   at the same instant.
+
+This streaming approach uses O(S) auxiliary memory (one heap entry per
+system with pending work) and O(E log S) time for E due occurrences across
+S systems, avoiding the O(E log E) cost of collecting and sorting all
+occurrences upfront.
 
 This guarantees, by construction, that:
 

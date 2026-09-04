@@ -64,36 +64,102 @@ public static class KernelSnapshotReader
                 $"Snapshot has an invalid NextEventSequenceNumber of {snapshot.NextEventSequenceNumber}; it must be at least 1.");
         }
 
-        // Validate probe system snapshots if present
-        if (snapshot.ProbeSystems is not null)
+        // Phase 2 snapshot validation (Population and MoneyLedger are optional for backwards compatibility)
+        if (snapshot.Population is not null)
         {
-            foreach (var kvp in snapshot.ProbeSystems)
-            {
-                if (string.IsNullOrWhiteSpace(kvp.Key))
-                {
-                    throw new SnapshotFormatException(
-                        "Snapshot contains a probe system with a null or empty system id.");
-                }
+            ValidatePopulationSnapshot(snapshot.Population);
+        }
 
-                ProbeSystemSnapshotDto probe = kvp.Value;
-                if (probe is null)
-                {
-                    throw new SnapshotFormatException(
-                        $"Snapshot contains a null probe system snapshot for id '{kvp.Key}'.");
-                }
-
-                // PCG32 requires an odd increment for valid operation
-                if ((probe.RandomIncrement & 1UL) == 0UL)
-                {
-                    throw new SnapshotFormatException(
-                        $"Snapshot contains a probe system '{kvp.Key}' with an even RandomIncrement " +
-                        $"({probe.RandomIncrement}); PCG32 requires an odd increment.");
-                }
-            }
+        if (snapshot.MoneyLedger is not null)
+        {
+            ValidateMoneyLedgerSnapshot(snapshot.MoneyLedger);
         }
 
         engine.Clock.Restore(new SimulationInstant(snapshot.CurrentInstantSeconds));
         engine.EntityIds.Restore(snapshot.NextEntityId);
         engine.Events.RestoreSequenceNumber(snapshot.NextEventSequenceNumber);
+
+        // Phase 2 state restoration will be implemented when PopulationState and MoneyLedger
+        // are integrated with SimulationEngine. For now, the validated snapshots are available
+        // for the caller to apply as needed.
+    }
+
+    private static void ValidatePopulationSnapshot(PopulationSnapshotDto population)
+    {
+        if (population.Individuals is null)
+        {
+            throw new SnapshotFormatException("Population snapshot has null Individuals collection.");
+        }
+
+        if (population.Households is null)
+        {
+            throw new SnapshotFormatException("Population snapshot has null Households collection.");
+        }
+
+        if (population.Cohorts is null)
+        {
+            throw new SnapshotFormatException("Population snapshot has null Cohorts collection.");
+        }
+
+        foreach (var person in population.Individuals)
+        {
+            if (person.PersonId < 0)
+            {
+                throw new SnapshotFormatException(
+                    $"Person snapshot has invalid PersonId {person.PersonId}; must be non-negative.");
+            }
+        }
+
+        foreach (var household in population.Households)
+        {
+            if (household.HouseholdId < 0)
+            {
+                throw new SnapshotFormatException(
+                    $"Household snapshot has invalid HouseholdId {household.HouseholdId}; must be non-negative.");
+            }
+
+            if (household.AccountId < 0)
+            {
+                throw new SnapshotFormatException(
+                    $"Household snapshot has invalid AccountId {household.AccountId}; must be non-negative.");
+            }
+        }
+
+        foreach (var cohort in population.Cohorts)
+        {
+            if (cohort.Count < 0)
+            {
+                throw new SnapshotFormatException(
+                    $"Cohort snapshot has invalid Count {cohort.Count}; must be non-negative.");
+            }
+        }
+    }
+
+    private static void ValidateMoneyLedgerSnapshot(MoneyLedgerSnapshotDto moneyLedger)
+    {
+        if (string.IsNullOrWhiteSpace(moneyLedger.Currency))
+        {
+            throw new SnapshotFormatException("MoneyLedger snapshot has null or empty Currency.");
+        }
+
+        if (moneyLedger.Currency.Length != 3)
+        {
+            throw new SnapshotFormatException(
+                $"MoneyLedger snapshot has invalid Currency '{moneyLedger.Currency}'; must be exactly 3 characters.");
+        }
+
+        if (moneyLedger.Accounts is null)
+        {
+            throw new SnapshotFormatException("MoneyLedger snapshot has null Accounts collection.");
+        }
+
+        foreach (var account in moneyLedger.Accounts)
+        {
+            if (account.AccountId < 0)
+            {
+                throw new SnapshotFormatException(
+                    $"Account snapshot has invalid AccountId {account.AccountId}; must be non-negative.");
+            }
+        }
     }
 }

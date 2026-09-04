@@ -70,9 +70,8 @@ Independent of formal benchmark gating, the following are enforced by
 review discipline throughout `Simulation.Core`'s hot paths (the
 scheduler's due-occurrence collection, the PRNG, and stable hashing):
 
-- No unnecessary heap allocation per tick (the scheduler reuses a scratch
-  list across calls to `RunDueOccurrences` rather than allocating one per
-  call).
+- No unnecessary heap allocation per tick (the scheduler uses a min-heap
+  with O(S) entries for S systems, reused across calls to `RunDueOccurrences`).
 - No reflection.
 - No LINQ where a plain loop is clearer and cheaper.
 - No boxing of value types in hot paths (`SimulationInstant`,
