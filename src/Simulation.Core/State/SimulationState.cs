@@ -1,4 +1,6 @@
+using CapitalismSim.Simulation.Core.Companies;
 using CapitalismSim.Simulation.Core.Economics;
+using CapitalismSim.Simulation.Core.Employment;
 using CapitalismSim.Simulation.Core.Population;
 
 namespace CapitalismSim.Simulation.Core.State;
@@ -9,9 +11,9 @@ namespace CapitalismSim.Simulation.Core.State;
 /// <remarks>
 /// <para>
 /// This class holds the mutable state of the simulation world: the monetary
-/// ledger, population state, and other domain aggregates. It is intentionally
-/// separated from <see cref="Engine.SimulationEngine"/> to maintain a clear
-/// boundary between runtime orchestration and domain state.
+/// ledger, population state, companies, employment, and other domain aggregates.
+/// It is intentionally separated from <see cref="Engine.SimulationEngine"/> to
+/// maintain a clear boundary between runtime orchestration and domain state.
 /// </para>
 /// <para>
 /// <strong>Determinism:</strong> All mutations must be deterministic. The state
@@ -36,12 +38,24 @@ public sealed class SimulationState
     public PopulationState Population { get; }
 
     /// <summary>
+    /// The companies state tracking all companies and job positions (Phase 3+).
+    /// </summary>
+    public CompaniesState Companies { get; }
+
+    /// <summary>
+    /// The employment state tracking all employment contracts and payroll (Phase 3+).
+    /// </summary>
+    public EmploymentState Employment { get; }
+
+    /// <summary>
     /// Creates a new empty simulation state with the specified currency.
     /// </summary>
     public SimulationState(CurrencyCode currency)
     {
         MoneyLedger = new MoneyLedger(currency);
         Population = new PopulationState();
+        Companies = new CompaniesState();
+        Employment = new EmploymentState();
     }
 
     /// <summary>
@@ -54,10 +68,16 @@ public sealed class SimulationState
     /// <summary>
     /// Creates a simulation state with the provided components.
     /// </summary>
-    public SimulationState(MoneyLedger moneyLedger, PopulationState population)
+    public SimulationState(
+        MoneyLedger moneyLedger,
+        PopulationState population,
+        CompaniesState companies,
+        EmploymentState employment)
     {
         MoneyLedger = moneyLedger ?? throw new ArgumentNullException(nameof(moneyLedger));
         Population = population ?? throw new ArgumentNullException(nameof(population));
+        Companies = companies ?? throw new ArgumentNullException(nameof(companies));
+        Employment = employment ?? throw new ArgumentNullException(nameof(employment));
     }
 
     /// <summary>
@@ -65,10 +85,10 @@ public sealed class SimulationState
     /// </summary>
     public SimulationState Clone()
     {
-        // MoneyLedger and PopulationState need to be cloneable
-        // For now, create new instances - this will need proper deep cloning
         return new SimulationState(
             MoneyLedger.Clone(),
-            Population.Clone());
+            Population.Clone(),
+            Companies.Clone(),
+            Employment.Clone());
     }
 }

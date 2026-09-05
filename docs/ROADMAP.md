@@ -30,9 +30,21 @@ invariants, `BasicNeedsProfile` and `HouseholdNeedsState` for consumption
 modeling, snapshot persistence for all Phase 2 state, Phase 2 benchmarks,
 and `--verify-save-load` for save/load verification.
 
-## Phase 3 — Companies and employment — FUTURE
+## Phase 3 — Companies and employment ✅ implemented in this delivery
 
-Not started.
+Company entities with `Company` and `JobPosition` types, `CompaniesState`
+managing companies and their positions with cross-domain validation,
+`EmploymentContract` linking persons to job positions, `EmploymentState`
+tracking contracts and payroll with wage arrears support, `PayrollState`
+for tracking unpaid wages and missed pay periods, snapshot persistence
+for all Phase 3 state, and extended validation for cross-domain integrity.
+
+### Phase 3 Fingerprint (30-day simulation)
+
+```
+seed: 123456
+fingerprint: 6f44a9dc15369e7e
+```
 
 ## Phase 4 — Production and consumption — FUTURE
 

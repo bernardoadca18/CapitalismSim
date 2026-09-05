@@ -12,6 +12,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="CapitalismSim.Simulation.Core.Tests" />
+    <InternalsVisibleTo Include="CapitalismSim.Simulation.Persistence" />
   </ItemGroup>
 
 </Project>
