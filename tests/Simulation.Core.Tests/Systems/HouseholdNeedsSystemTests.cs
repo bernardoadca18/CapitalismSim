@@ -5,6 +5,7 @@ using CapitalismSim.Simulation.Core.Population;
 using CapitalismSim.Simulation.Core.Scheduling;
 using CapitalismSim.Simulation.Core.Systems;
 using CapitalismSim.Simulation.Core.Time;
+using Xunit;
 
 namespace CapitalismSim.Simulation.Core.Tests.Systems;
 
@@ -39,10 +40,10 @@ public class HouseholdNeedsSystemTests
         var system = new HouseholdNeedsSystem(CurrencyCode.USD);
         engine.Scheduler.Register(system, new SchedulingPolicy(
             SimulationInstant.Epoch,
-            SimulationDuration.FromDays(30)));
+            SimulationDuration.FromDays(1)));
 
         // Should not throw
-        engine.AdvanceBy(SimulationDuration.FromDays(30));
+        engine.AdvanceBy(SimulationDuration.FromDays(1));
 
         Assert.Equal(0, engine.State.Population.HouseholdCount);
     }
@@ -66,9 +67,9 @@ public class HouseholdNeedsSystemTests
         var system = new HouseholdNeedsSystem(CurrencyCode.USD);
         engine.Scheduler.Register(system, new SchedulingPolicy(
             SimulationInstant.Epoch,
-            SimulationDuration.FromDays(30)));
+            SimulationDuration.FromDays(1)));
 
-        engine.AdvanceBy(SimulationDuration.FromDays(30));
+        engine.AdvanceBy(SimulationDuration.FromDays(1));
 
         // Balance should remain unchanged (no members = no needs)
         var balance = engine.State.MoneyLedger.GetBalance(accountId);
@@ -96,31 +97,31 @@ public class HouseholdNeedsSystemTests
             var personId = new PersonId(engine.EntityIds.Allocate());
             var personalAccountId = new AccountId(engine.EntityIds.Allocate());
             engine.State.MoneyLedger.CreateAccount(personalAccountId, personId.EntityId);
-            var person = new Person(personId, householdId, 25 + i, personalAccountId);
+            var person = Person.WithAge(personId, householdId, 25 + i, referenceSimulationDay: 0, personalAccountId);
             engine.State.Population.AddPerson(person);
         }
 
         // Give household sufficient funds ($10,000)
         engine.State.MoneyLedger.ExternalCredit(accountId, new Money(1000000, CurrencyCode.USD), MoneyFlowReason.InitialEndowment);
 
+        // Daily needs: $75/person + $120 housing + $15 utilities = $435/day
         var profile = new BasicNeedsProfile(
-            foodPerPersonMonthly: new Money(30000, CurrencyCode.USD),    // $300 per person
-            housingMonthly: new Money(120000, CurrencyCode.USD),         // $1200 rent
-            utilitiesMonthly: new Money(15000, CurrencyCode.USD),        // $150 utilities
-            healthcarePerPersonMonthly: new Money(20000, CurrencyCode.USD) // $200 per person
+            dailyEssentialCostPerMember: new Money(7500, CurrencyCode.USD),    // $75/day per person
+            dailyHousingCost: new Money(12000, CurrencyCode.USD),             // $120/day housing
+            dailyUtilitiesCost: new Money(1500, CurrencyCode.USD)             // $15/day utilities
         );
 
         var system = new HouseholdNeedsSystem(profile);
         engine.Scheduler.Register(system, new SchedulingPolicy(
             SimulationInstant.Epoch,
-            SimulationDuration.FromDays(30)));
+            SimulationDuration.FromDays(1)));
 
-        engine.AdvanceBy(SimulationDuration.FromDays(30));
+        engine.AdvanceBy(SimulationDuration.FromDays(1));
 
-        // Expected needs: 4 * ($300 + $200) + $1200 + $150 = $2000 + $1350 = $3350
-        // Expected balance: $10000 - $3350 = $6650
+        // Expected needs: 4 * $75 + $120 + $15 = $300 + $135 = $435
+        // Expected balance: $10000 - $435 = $9565
         var balance = engine.State.MoneyLedger.GetBalance(accountId);
-        Assert.Equal(665000, balance.MinorUnits);
+        Assert.Equal(956500, balance.MinorUnits);
     }
 
     [Fact]
@@ -144,19 +145,19 @@ public class HouseholdNeedsSystemTests
             var personId = new PersonId(engine.EntityIds.Allocate());
             var personalAccountId = new AccountId(engine.EntityIds.Allocate());
             engine.State.MoneyLedger.CreateAccount(personalAccountId, personId.EntityId);
-            var person = new Person(personId, householdId, 25 + i, personalAccountId);
+            var person = Person.WithAge(personId, householdId, 25 + i, referenceSimulationDay: 0, personalAccountId);
             engine.State.Population.AddPerson(person);
         }
 
-        // Give household insufficient funds ($1000, less than needs)
-        engine.State.MoneyLedger.ExternalCredit(accountId, new Money(100000, CurrencyCode.USD), MoneyFlowReason.InitialEndowment);
+        // Give household insufficient funds ($100, less than needs)
+        engine.State.MoneyLedger.ExternalCredit(accountId, new Money(10000, CurrencyCode.USD), MoneyFlowReason.InitialEndowment);
 
         var system = new HouseholdNeedsSystem(CurrencyCode.USD);
         engine.Scheduler.Register(system, new SchedulingPolicy(
             SimulationInstant.Epoch,
-            SimulationDuration.FromDays(30)));
+            SimulationDuration.FromDays(1)));
 
-        engine.AdvanceBy(SimulationDuration.FromDays(30));
+        engine.AdvanceBy(SimulationDuration.FromDays(1));
 
         // Balance should be zero (all consumed)
         var balance = engine.State.MoneyLedger.GetBalance(accountId);
@@ -164,7 +165,7 @@ public class HouseholdNeedsSystemTests
     }
 
     [Fact]
-    public void Tick_RunsMonthly_ConsumesEachMonth()
+    public void Tick_RunsDaily_ConsumesEachDay()
     {
         var engine = new SimulationEngine(new SimulationEngineOptions
         {
@@ -181,31 +182,31 @@ public class HouseholdNeedsSystemTests
         var personId = new PersonId(engine.EntityIds.Allocate());
         var personalAccountId = new AccountId(engine.EntityIds.Allocate());
         engine.State.MoneyLedger.CreateAccount(personalAccountId, personId.EntityId);
-        var person = new Person(personId, householdId, 30, personalAccountId);
+        var person = Person.WithAge(personId, householdId, 30, referenceSimulationDay: 0, personalAccountId);
         engine.State.Population.AddPerson(person);
 
         // Give household $10000
         engine.State.MoneyLedger.ExternalCredit(accountId, new Money(1000000, CurrencyCode.USD), MoneyFlowReason.InitialEndowment);
 
+        // Daily needs: $100/person + $50 housing + $10 utilities = $160/day
         var profile = new BasicNeedsProfile(
-            foodPerPersonMonthly: new Money(10000, CurrencyCode.USD),    // $100
-            housingMonthly: new Money(20000, CurrencyCode.USD),         // $200
-            utilitiesMonthly: new Money(5000, CurrencyCode.USD),        // $50
-            healthcarePerPersonMonthly: new Money(5000, CurrencyCode.USD) // $50
+            dailyEssentialCostPerMember: new Money(10000, CurrencyCode.USD),    // $100/day per person
+            dailyHousingCost: new Money(5000, CurrencyCode.USD),                // $50/day housing
+            dailyUtilitiesCost: new Money(1000, CurrencyCode.USD)                // $10/day utilities
         );
 
         var system = new HouseholdNeedsSystem(profile);
         engine.Scheduler.Register(system, new SchedulingPolicy(
             SimulationInstant.Epoch,
-            SimulationDuration.FromDays(30)));
+            SimulationDuration.FromDays(1)));
 
-        // Run for 3 months
-        engine.AdvanceBy(SimulationDuration.FromDays(90));
+        // Run for 3 days
+        engine.AdvanceBy(SimulationDuration.FromDays(3));
 
-        // Expected needs per month: $100 + $200 + $50 + $50 = $400
-        // After 3 months: $10000 - (3 * $400) = $8800
+        // Expected needs per day: $100 + $50 + $10 = $160
+        // After 3 days: $10000 - (3 * $160) = $9520
         var balance = engine.State.MoneyLedger.GetBalance(accountId);
-        Assert.Equal(880000, balance.MinorUnits);
+        Assert.Equal(952000, balance.MinorUnits);
     }
 
     [Fact]
@@ -226,7 +227,7 @@ public class HouseholdNeedsSystemTests
         var personId = new PersonId(engine.EntityIds.Allocate());
         var personalAccountId = new AccountId(engine.EntityIds.Allocate());
         engine.State.MoneyLedger.CreateAccount(personalAccountId, personId.EntityId);
-        var person = new Person(personId, householdId, 30, personalAccountId);
+        var person = Person.WithAge(personId, householdId, 30, referenceSimulationDay: 0, personalAccountId);
         engine.State.Population.AddPerson(person);
 
         engine.State.MoneyLedger.ExternalCredit(accountId, new Money(100000, CurrencyCode.USD), MoneyFlowReason.InitialEndowment);
@@ -234,9 +235,9 @@ public class HouseholdNeedsSystemTests
         var system = new HouseholdNeedsSystem(CurrencyCode.USD);
         engine.Scheduler.Register(system, new SchedulingPolicy(
             SimulationInstant.Epoch,
-            SimulationDuration.FromDays(30)));
+            SimulationDuration.FromDays(1)));
 
-        engine.AdvanceBy(SimulationDuration.FromDays(30));
+        engine.AdvanceBy(SimulationDuration.FromDays(1));
 
         // Supply accounting should remain valid
         Assert.True(engine.State.MoneyLedger.VerifySupplyAccounting());
@@ -260,7 +261,7 @@ public class HouseholdNeedsSystemTests
         var personId = new PersonId(engine.EntityIds.Allocate());
         var personalAccountId = new AccountId(engine.EntityIds.Allocate());
         engine.State.MoneyLedger.CreateAccount(personalAccountId, personId.EntityId);
-        var person = new Person(personId, householdId, 30, personalAccountId);
+        var person = Person.WithAge(personId, householdId, 30, referenceSimulationDay: 0, personalAccountId);
         engine.State.Population.AddPerson(person);
 
         engine.State.MoneyLedger.ExternalCredit(accountId, new Money(100000, CurrencyCode.USD), MoneyFlowReason.InitialEndowment);
@@ -268,13 +269,97 @@ public class HouseholdNeedsSystemTests
         var system = new HouseholdNeedsSystem(CurrencyCode.USD);
         engine.Scheduler.Register(system, new SchedulingPolicy(
             SimulationInstant.Epoch,
-            SimulationDuration.FromDays(30)));
+            SimulationDuration.FromDays(1)));
 
-        engine.AdvanceBy(SimulationDuration.FromDays(30));
+        engine.AdvanceBy(SimulationDuration.FromDays(1));
 
         // Check needs state was recorded
         var needsState = engine.State.Population.GetHouseholdNeedsState(householdId);
         Assert.NotNull(needsState);
         Assert.Equal(householdId, needsState.HouseholdId);
+    }
+
+    [Fact]
+    public void Tick_TracksConsecutiveShortfallDays()
+    {
+        var engine = new SimulationEngine(new SimulationEngineOptions
+        {
+            WorldSeed = 12345,
+            Currency = CurrencyCode.USD,
+        });
+
+        // Create household with 1 member
+        var householdId = new HouseholdId(engine.EntityIds.Allocate());
+        var accountId = new AccountId(engine.EntityIds.Allocate());
+        engine.State.Population.CreateHousehold(householdId, accountId);
+        engine.State.MoneyLedger.CreateAccount(accountId, householdId.EntityId);
+
+        var personId = new PersonId(engine.EntityIds.Allocate());
+        var personalAccountId = new AccountId(engine.EntityIds.Allocate());
+        engine.State.MoneyLedger.CreateAccount(personalAccountId, personId.EntityId);
+        var person = Person.WithAge(personId, householdId, 30, referenceSimulationDay: 0, personalAccountId);
+        engine.State.Population.AddPerson(person);
+
+        // Give household insufficient funds (will have shortfall each day)
+        engine.State.MoneyLedger.ExternalCredit(accountId, new Money(1000, CurrencyCode.USD), MoneyFlowReason.InitialEndowment);
+
+        var system = new HouseholdNeedsSystem(CurrencyCode.USD);
+        engine.Scheduler.Register(system, new SchedulingPolicy(
+            SimulationInstant.Epoch,
+            SimulationDuration.FromDays(1)));
+
+        // Run for 3 days
+        engine.AdvanceBy(SimulationDuration.FromDays(3));
+
+        // Should have 3 consecutive shortfall days
+        var needsState = engine.State.Population.GetHouseholdNeedsState(householdId);
+        Assert.NotNull(needsState);
+        Assert.Equal(3, needsState.ConsecutiveShortfallDays);
+    }
+
+    [Fact]
+    public void Tick_ResetsConsecutiveShortfallOnFullPayment()
+    {
+        var engine = new SimulationEngine(new SimulationEngineOptions
+        {
+            WorldSeed = 12345,
+            Currency = CurrencyCode.USD,
+        });
+
+        // Create household with 1 member
+        var householdId = new HouseholdId(engine.EntityIds.Allocate());
+        var accountId = new AccountId(engine.EntityIds.Allocate());
+        engine.State.Population.CreateHousehold(householdId, accountId);
+        engine.State.MoneyLedger.CreateAccount(accountId, householdId.EntityId);
+
+        var personId = new PersonId(engine.EntityIds.Allocate());
+        var personalAccountId = new AccountId(engine.EntityIds.Allocate());
+        engine.State.MoneyLedger.CreateAccount(personalAccountId, personId.EntityId);
+        var person = Person.WithAge(personId, householdId, 30, referenceSimulationDay: 0, personalAccountId);
+        engine.State.Population.AddPerson(person);
+
+        // Give household insufficient funds initially
+        engine.State.MoneyLedger.ExternalCredit(accountId, new Money(1000, CurrencyCode.USD), MoneyFlowReason.InitialEndowment);
+
+        var system = new HouseholdNeedsSystem(CurrencyCode.USD);
+        engine.Scheduler.Register(system, new SchedulingPolicy(
+            SimulationInstant.Epoch,
+            SimulationDuration.FromDays(1)));
+
+        // Run for 2 days with shortfall
+        engine.AdvanceBy(SimulationDuration.FromDays(2));
+
+        var needsState = engine.State.Population.GetHouseholdNeedsState(householdId);
+        Assert.NotNull(needsState);
+        Assert.Equal(2, needsState.ConsecutiveShortfallDays);
+
+        // Add sufficient funds
+        engine.State.MoneyLedger.ExternalCredit(accountId, new Money(100000, CurrencyCode.USD), MoneyFlowReason.InitialEndowment);
+
+        // Run for 1 more day (full payment)
+        engine.AdvanceBy(SimulationDuration.FromDays(1));
+
+        // Consecutive shortfall should reset to 0
+        Assert.Equal(0, needsState.ConsecutiveShortfallDays);
     }
 }

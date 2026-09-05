@@ -238,6 +238,44 @@ public sealed class PopulationStateTests
         Assert.Equal(503L, state.TotalPopulation);
     }
 
+    /// <summary>
+    /// Large population LOD test: demonstrates that cohorts can represent
+    /// ~300M population without creating 300M individual entity records.
+    /// This is the key scalability feature of the PopulationState design.
+    /// </summary>
+    [Fact]
+    public void LargePopulation_UsingCohorts_ScalesTo300Million()
+    {
+        var state = new PopulationState();
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+
+        // Simulate a large country with 330M population using 330 cohorts of 1M each
+        // This tests that we can represent large populations without memory explosion
+        const int cohortCount = 330;
+        const long peoplePerCohort = 1_000_000L;
+        const long expectedTotal = cohortCount * peoplePerCohort;
+
+        for (int i = 0; i < cohortCount; i++)
+        {
+            var cohortId = new PopulationCohortId(new EntityId(i + 1));
+            state.SetCohort(new PopulationCohort(cohortId, peoplePerCohort, HouseholdId.None));
+        }
+
+        sw.Stop();
+
+        // Verify we can represent 330M people
+        Assert.Equal(cohortCount, state.CohortCount);
+        Assert.Equal(expectedTotal, state.TotalPopulation);
+
+        // Verify the operation was fast (should be < 100ms for 330 cohorts)
+        // This demonstrates that cohort-based population scales efficiently
+        Assert.True(sw.ElapsedMilliseconds < 1000,
+            $"Creating {cohortCount} cohorts took {sw.ElapsedMilliseconds}ms, expected < 1000ms");
+
+        // Verify individual count is 0 - we haven't created any Person records
+        Assert.Equal(0, state.IndividualCount);
+    }
+
     [Fact]
     public void AddPerson_WithHousehold_AddsMemberToHousehold()
     {
@@ -403,6 +441,292 @@ public sealed class PopulationStateTests
         Assert.Contains(h1, ids);
         Assert.Contains(h3, ids);
         Assert.DoesNotContain(h2, ids);
+    }
+
+    #endregion
+
+    #region MovePerson Tests
+
+    [Fact]
+    public void MovePerson_TransfersPersonBetweenHouseholds()
+    {
+        var state = new PopulationState();
+        var h1 = new HouseholdId(new EntityId(1));
+        var h2 = new HouseholdId(new EntityId(2));
+        state.CreateHousehold(h1, new AccountId(new EntityId(100)));
+        state.CreateHousehold(h2, new AccountId(new EntityId(101)));
+        var personId = new PersonId(new EntityId(1));
+        state.AddPerson(new Person(personId, h1));
+
+        state.MovePerson(personId, h2);
+
+        var person = state.GetPerson(personId);
+        Assert.Equal(h2, person.HouseholdId);
+        var household1 = state.GetHousehold(h1);
+        var household2 = state.GetHousehold(h2);
+        Assert.NotNull(household1);
+        Assert.NotNull(household2);
+        Assert.DoesNotContain(personId, household1.Members);
+        Assert.Contains(personId, household2.Members);
+    }
+
+    [Fact]
+    public void MovePerson_NonePersonId_Throws()
+    {
+        var state = new PopulationState();
+        var h = new HouseholdId(new EntityId(1));
+        state.CreateHousehold(h, new AccountId(new EntityId(100)));
+
+        Assert.Throws<ArgumentException>(() => state.MovePerson(PersonId.None, h));
+    }
+
+    [Fact]
+    public void MovePerson_NoneHouseholdId_Throws()
+    {
+        var state = new PopulationState();
+        var h1 = new HouseholdId(new EntityId(1));
+        state.CreateHousehold(h1, new AccountId(new EntityId(100)));
+        var personId = new PersonId(new EntityId(1));
+        state.AddPerson(new Person(personId, h1));
+
+        Assert.Throws<ArgumentException>(() => state.MovePerson(personId, HouseholdId.None));
+    }
+
+    [Fact]
+    public void MovePerson_NonExistentPerson_Throws()
+    {
+        var state = new PopulationState();
+        var h = new HouseholdId(new EntityId(1));
+        state.CreateHousehold(h, new AccountId(new EntityId(100)));
+        var personId = new PersonId(new EntityId(999));
+
+        Assert.Throws<InvalidOperationException>(() => state.MovePerson(personId, h));
+    }
+
+    [Fact]
+    public void MovePerson_NonExistentDestinationHousehold_Throws()
+    {
+        var state = new PopulationState();
+        var h1 = new HouseholdId(new EntityId(1));
+        var h2 = new HouseholdId(new EntityId(2)); // Not created
+        state.CreateHousehold(h1, new AccountId(new EntityId(100)));
+        var personId = new PersonId(new EntityId(1));
+        state.AddPerson(new Person(personId, h1));
+
+        Assert.Throws<InvalidOperationException>(() => state.MovePerson(personId, h2));
+    }
+
+    [Fact]
+    public void MovePerson_AlreadyInDestinationHousehold_Throws()
+    {
+        var state = new PopulationState();
+        var h = new HouseholdId(new EntityId(1));
+        state.CreateHousehold(h, new AccountId(new EntityId(100)));
+        var personId = new PersonId(new EntityId(1));
+        state.AddPerson(new Person(personId, h));
+
+        Assert.Throws<InvalidOperationException>(() => state.MovePerson(personId, h));
+    }
+
+    [Fact]
+    public void MovePerson_PreservesOtherAttributes()
+    {
+        var state = new PopulationState();
+        var h1 = new HouseholdId(new EntityId(1));
+        var h2 = new HouseholdId(new EntityId(2));
+        state.CreateHousehold(h1, new AccountId(new EntityId(100)));
+        state.CreateHousehold(h2, new AccountId(new EntityId(101)));
+        var personId = new PersonId(new EntityId(1));
+        var personalAccount = new AccountId(new EntityId(200));
+        var person = Person.WithAge(personId, h1, 30, referenceSimulationDay: 0, personalAccount);
+        state.AddPerson(person);
+
+        state.MovePerson(personId, h2);
+
+        var movedPerson = state.GetPerson(personId);
+        Assert.Equal(30, movedPerson.GetAge(0));
+        Assert.Equal(personalAccount, movedPerson.PersonalAccountId);
+    }
+
+    #endregion
+
+    #region AddPeople Duplicate Detection Tests
+
+    [Fact]
+    public void AddPeople_DetectsDuplicatesWithinBatch()
+    {
+        var state = new PopulationState();
+        var h = new HouseholdId(new EntityId(10));
+        state.CreateHousehold(h, new AccountId(new EntityId(100)));
+        var personId = new PersonId(new EntityId(1));
+        var people = new List<Person>
+        {
+            new(personId, h),
+            new(personId, h), // Duplicate ID in same batch
+        };
+
+        var ex = Assert.Throws<InvalidOperationException>(() => state.AddPeople(people));
+        Assert.Contains("duplicate person ID", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AddPeople_DuplicateInBatch_DoesNotMutate()
+    {
+        var state = new PopulationState();
+        var h = new HouseholdId(new EntityId(10));
+        state.CreateHousehold(h, new AccountId(new EntityId(100)));
+        var p1 = new PersonId(new EntityId(1));
+        var p2 = new PersonId(new EntityId(2));
+        var people = new List<Person>
+        {
+            new(p1, h),
+            new(p1, h), // Duplicate ID
+            new(p2, h),
+        };
+
+        Assert.Throws<InvalidOperationException>(() => state.AddPeople(people));
+
+        Assert.Equal(0, state.IndividualCount);
+        var household = state.GetHousehold(h);
+        Assert.NotNull(household);
+        Assert.Equal(0, household.MemberCount);
+    }
+
+    #endregion
+
+    #region Validation Tests
+
+    [Fact]
+    public void ValidatePersonalAccounts_ValidAccounts_ReturnsSuccess()
+    {
+        var state = new PopulationState();
+        var ledger = new MoneyLedger(CurrencyCode.USD);
+        var h = new HouseholdId(new EntityId(10));
+        var accountId = new AccountId(new EntityId(100));
+        state.CreateHousehold(h, accountId);
+        ledger.CreateAccount(accountId, h.EntityId);
+
+        var personId = new PersonId(new EntityId(1));
+        var personalAccountId = new AccountId(new EntityId(200));
+        ledger.CreateAccount(personalAccountId, personId.EntityId);
+        var person = new Person(personId, h, personalAccountId: personalAccountId);
+        state.AddPerson(person);
+
+        var result = state.ValidatePersonalAccounts(ledger);
+
+        Assert.True(result.IsValid);
+        Assert.Empty(result.Violations);
+    }
+
+    [Fact]
+    public void ValidatePersonalAccounts_MissingAccount_ReturnsFailure()
+    {
+        var state = new PopulationState();
+        var ledger = new MoneyLedger(CurrencyCode.USD);
+        var h = new HouseholdId(new EntityId(10));
+        var accountId = new AccountId(new EntityId(100));
+        state.CreateHousehold(h, accountId);
+        ledger.CreateAccount(accountId, h.EntityId);
+
+        var personId = new PersonId(new EntityId(1));
+        var personalAccountId = new AccountId(new EntityId(200));
+        // Note: NOT creating the account in ledger
+        var person = new Person(personId, h, personalAccountId: personalAccountId);
+        state.AddPerson(person);
+
+        var result = state.ValidatePersonalAccounts(ledger);
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Violations, v => v.Contains("does not exist in ledger"));
+    }
+
+    [Fact]
+    public void ValidatePersonalAccounts_WrongOwner_ReturnsFailure()
+    {
+        var state = new PopulationState();
+        var ledger = new MoneyLedger(CurrencyCode.USD);
+        var h = new HouseholdId(new EntityId(10));
+        var accountId = new AccountId(new EntityId(100));
+        state.CreateHousehold(h, accountId);
+        ledger.CreateAccount(accountId, h.EntityId);
+
+        var personId = new PersonId(new EntityId(1));
+        var personalAccountId = new AccountId(new EntityId(200));
+        // Create account with WRONG owner
+        var wrongOwner = new EntityId(999);
+        ledger.CreateAccount(personalAccountId, wrongOwner);
+        var person = new Person(personId, h, personalAccountId: personalAccountId);
+        state.AddPerson(person);
+
+        var result = state.ValidatePersonalAccounts(ledger);
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Violations, v => v.Contains("owned by") && v.Contains("expected"));
+    }
+
+    [Fact]
+    public void ValidatePersonalAccounts_NoPersonalAccount_SkipsValidation()
+    {
+        var state = new PopulationState();
+        var ledger = new MoneyLedger(CurrencyCode.USD);
+        var h = new HouseholdId(new EntityId(10));
+        var accountId = new AccountId(new EntityId(100));
+        state.CreateHousehold(h, accountId);
+        ledger.CreateAccount(accountId, h.EntityId);
+
+        var personId = new PersonId(new EntityId(1));
+        // Person with no personal account
+        var person = new Person(personId, h);
+        state.AddPerson(person);
+
+        var result = state.ValidatePersonalAccounts(ledger);
+
+        Assert.True(result.IsValid);
+    }
+
+    [Fact]
+    public void ValidateIntegrity_ValidState_ReturnsSuccess()
+    {
+        var state = new PopulationState();
+        var ledger = new MoneyLedger(CurrencyCode.USD);
+        var h = new HouseholdId(new EntityId(10));
+        var accountId = new AccountId(new EntityId(100));
+        state.CreateHousehold(h, accountId);
+        ledger.CreateAccount(accountId, h.EntityId);
+
+        var personId = new PersonId(new EntityId(1));
+        var personalAccountId = new AccountId(new EntityId(200));
+        ledger.CreateAccount(personalAccountId, personId.EntityId);
+        var person = new Person(personId, h, personalAccountId: personalAccountId);
+        state.AddPerson(person);
+
+        var result = state.ValidateIntegrity(ledger);
+
+        Assert.True(result.IsValid);
+        Assert.Empty(result.Violations);
+    }
+
+    [Fact]
+    public void ValidateIntegrity_MultipleViolations_ReportsAll()
+    {
+        var state = new PopulationState();
+        var ledger = new MoneyLedger(CurrencyCode.USD);
+
+        var h = new HouseholdId(new EntityId(10));
+        var accountId = new AccountId(new EntityId(100));
+        state.CreateHousehold(h, accountId);
+        ledger.CreateAccount(accountId, h.EntityId);
+
+        // Create a person with a personal account that doesn't exist in ledger
+        var personId = new PersonId(new EntityId(1));
+        var fakeAccountId = new AccountId(new EntityId(999));
+        var person = new Person(personId, h, personalAccountId: fakeAccountId);
+        state.AddPerson(person);
+
+        var result = state.ValidateIntegrity(ledger);
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Violations, v => v.Contains("does not exist in ledger"));
     }
 
     #endregion

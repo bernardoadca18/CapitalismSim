@@ -44,7 +44,7 @@ public static class KernelSnapshotWriter
             {
                 PersonId = person.Id.EntityId.Value,
                 HouseholdId = person.HouseholdId.EntityId.Value,
-                Age = person.Age,
+                BirthDayIndex = person.BirthDayIndex,
                 PersonalAccountId = person.PersonalAccountId.EntityId.Value,
             });
         }
@@ -81,7 +81,31 @@ public static class KernelSnapshotWriter
             Individuals = individuals,
             Households = households,
             Cohorts = cohorts,
+            HouseholdNeeds = CaptureHouseholdNeeds(population),
         };
+    }
+
+    private static List<HouseholdNeedsSnapshotDto> CaptureHouseholdNeeds(PopulationState population)
+    {
+        var needsList = new List<HouseholdNeedsSnapshotDto>();
+        foreach (var householdId in population.GetAllHouseholdIds())
+        {
+            var needsState = population.GetHouseholdNeedsState(householdId);
+            if (needsState is not null)
+            {
+                needsList.Add(new HouseholdNeedsSnapshotDto
+                {
+                    HouseholdId = needsState.HouseholdId.EntityId.Value,
+                    DailyEssentialCostPerMember = needsState.NeedsProfile.DailyEssentialCostPerMember.MinorUnits,
+                    DailyHousingCost = needsState.NeedsProfile.DailyHousingCost.MinorUnits,
+                    DailyUtilitiesCost = needsState.NeedsProfile.DailyUtilitiesCost.MinorUnits,
+                    ConsecutiveShortfallDays = needsState.ConsecutiveShortfallDays,
+                    CumulativeShortfall = needsState.CumulativeShortfall.MinorUnits,
+                });
+            }
+        }
+
+        return needsList;
     }
 
     private static MoneyLedgerSnapshotDto CaptureMoneyLedger(MoneyLedger ledger)

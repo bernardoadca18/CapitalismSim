@@ -23,8 +23,7 @@ public sealed class Phase2Scenario
 {
     public required SimulationEngine Engine { get; init; }
     public required HouseholdNeedsSystem NeedsSystem { get; init; }
-
-    private readonly CurrencyCode _currency;
+    public required CurrencyCode Currency { get; init; }
 
     public static Phase2Scenario Create(ulong seed, int householdCount = 10, int personsPerHousehold = 4)
     {
@@ -40,7 +39,7 @@ public sealed class Phase2Scenario
         var needsSystem = new HouseholdNeedsSystem(currency);
         engine.Scheduler.Register(needsSystem, new SchedulingPolicy(
             SimulationInstant.Epoch,
-            SimulationDuration.FromDays(30))); // Monthly
+            SimulationDuration.FromDays(1))); // Daily
 
         // Populate the simulation with households and persons
         PopulateSimulation(engine, householdCount, personsPerHousehold, currency);
@@ -49,7 +48,7 @@ public sealed class Phase2Scenario
         {
             Engine = engine,
             NeedsSystem = needsSystem,
-            _currency = currency,
+            Currency = currency,
         };
     }
 
@@ -83,17 +82,11 @@ public sealed class Phase2Scenario
                 var personalAccountId = new AccountId(personalAccountEntityId);
                 ledger.CreateAccount(personalAccountId, personEntityId);
 
-                // Create person (age 18-65 for working adults)
+                // Create person (age 18-65 for working adults at epoch)
                 int age = 18 + (int)(h * personsPerHousehold + p) % 48;
-                var person = new Person(personId, householdId, age, personalAccountId);
+                var person = Person.WithAge(personId, householdId, age, referenceSimulationDay: 0, personalAccountId);
                 population.AddPerson(person);
             }
-
-            // Create a cohort for the household (represents family unit for aggregation)
-            var cohortEntityId = engine.EntityIds.Allocate();
-            var cohortId = new PopulationCohortId(cohortEntityId);
-            var cohort = new PopulationCohort(cohortId, personsPerHousehold, householdId);
-            population.SetCohort(cohort);
         }
     }
 
@@ -142,11 +135,11 @@ public sealed class Phase2Scenario
         {
             TotalHouseholds = population.HouseholdCount,
             TotalPersons = totalPersons,
-            TotalCohorts = population.CohortCount,
-            TotalMoneySupply = new Money(totalBalance, _currency),
+            TotalCohorts = 0, // Cohorts are for aggregate LOD, not detailed simulation
+            TotalMoneySupply = new Money(totalBalance, Currency),
             AverageHouseholdBalance = population.HouseholdCount > 0
-                ? new Money(totalBalance / population.HouseholdCount, _currency)
-                : Money.Zero(_currency),
+                ? new Money(totalBalance / population.HouseholdCount, Currency)
+                : Money.Zero(Currency),
             HouseholdsTracked = householdsWithNeeds,
             FullySatisfiedHouseholds = fullySatisfiedHouseholds,
             SupplyAccountingValid = ledger.VerifySupplyAccounting(),

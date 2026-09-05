@@ -20,10 +20,15 @@ infrastructure, a top-level `SimulationEngine`, kernel snapshotting
 (`Simulation.Benchmarks`), and an automated test suite including a
 save/load equivalence test.
 
-## Phase 2 — People, families and money — FUTURE
+## Phase 2 — People, families and money ✅ implemented in this delivery
 
-Not started. Will introduce the first real domain entities and the
-`Money` type (explicitly not `float`-based; see `GAME_DESIGN.md`).
+Population system with `Person` and `Household` entities, `PopulationState`
+tracking both detailed individuals and aggregate cohorts (LOD architecture),
+`PopulationCohort` for large-scale populations (millions without per-entity
+allocation), `MoneyLedger` for double-entry accounting with supply
+invariants, `BasicNeedsProfile` and `HouseholdNeedsState` for consumption
+modeling, snapshot persistence for all Phase 2 state, Phase 2 benchmarks,
+and `--verify-save-load` for save/load verification.
 
 ## Phase 3 — Companies and employment — FUTURE
 

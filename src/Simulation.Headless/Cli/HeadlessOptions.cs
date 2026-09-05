@@ -19,6 +19,8 @@ public sealed class HeadlessOptions
 
     public bool VerifyDeterminism { get; init; }
 
+    public bool VerifySaveLoad { get; init; }
+
     public bool Phase2 { get; init; }
 
     public static HeadlessOptions Parse(string[] args)
@@ -28,6 +30,7 @@ public sealed class HeadlessOptions
         string? savePath = null;
         string? loadPath = null;
         bool verifyDeterminism = false;
+        bool verifySaveLoad = false;
         bool phase2 = false;
 
         for (int i = 0; i < args.Length; i++)
@@ -48,6 +51,9 @@ public sealed class HeadlessOptions
                     break;
                 case "--verify-determinism":
                     verifyDeterminism = true;
+                    break;
+                case "--verify-save-load":
+                    verifySaveLoad = true;
                     break;
                 case "--phase2":
                     phase2 = true;
@@ -74,6 +80,7 @@ public sealed class HeadlessOptions
             SavePath = savePath,
             LoadPath = loadPath,
             VerifyDeterminism = verifyDeterminism,
+            VerifySaveLoad = verifySaveLoad,
             Phase2 = phase2,
         };
     }

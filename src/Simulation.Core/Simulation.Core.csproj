@@ -10,4 +10,8 @@
     -->
   </PropertyGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="CapitalismSim.Simulation.Core.Tests" />
+  </ItemGroup>
+
 </Project>

@@ -279,6 +279,43 @@ public sealed class MoneyLedger
         return clone;
     }
 
+    /// <summary>
+    /// Restores account state directly from snapshot data.
+    /// This bypasses normal ExternalCredit/ExternalDebit paths to restore
+    /// exact balances and supply counters without affecting accounting invariants.
+    /// </summary>
+    /// <param name="accounts">The accounts to restore (accountId, owner, balance).</param>
+    /// <param name="totalExternalCredits">The total external credits counter.</param>
+    /// <param name="totalExternalDebits">The total external debits counter.</param>
+    public void Restore(
+        IEnumerable<(AccountId AccountId, EntityId Owner, long BalanceMinorUnits)> accounts,
+        long totalExternalCredits,
+        long totalExternalDebits)
+    {
+        ArgumentNullException.ThrowIfNull(accounts);
+
+        _accounts.Clear();
+        foreach (var (accountId, owner, balance) in accounts)
+        {
+            if (owner.IsNone)
+            {
+                throw new ArgumentException(
+                    $"Account {accountId} has invalid owner EntityId.None.", nameof(accounts));
+            }
+
+            if (balance < 0)
+            {
+                throw new ArgumentException(
+                    $"Account {accountId} has invalid negative balance {balance}.", nameof(accounts));
+            }
+
+            _accounts[accountId] = new AccountData(balance, owner);
+        }
+
+        _totalExternalCredits = totalExternalCredits;
+        _totalExternalDebits = totalExternalDebits;
+    }
+
     private void ValidateCurrency(Money amount)
     {
         if (amount.Currency != _currency)

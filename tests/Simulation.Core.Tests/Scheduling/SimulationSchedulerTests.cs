@@ -1,4 +1,5 @@
 using CapitalismSim.Simulation.Core.Scheduling;
+using CapitalismSim.Simulation.Core.State;
 using CapitalismSim.Simulation.Core.Time;
 using Xunit;
 
@@ -38,7 +39,8 @@ public sealed class SimulationSchedulerTests
         // t=60 is exactly at previousInstant -> should NOT fire (exclusive bound)
         // t=120 is exactly at newInstant -> should fire exactly once (inclusive bound)
         var clock = new SimulationClock(SimulationInstant.Epoch);
-        scheduler.RunDueOccurrences(new SimulationInstant(60), new SimulationInstant(120), clock);
+        var state = new SimulationState();
+        scheduler.RunDueOccurrences(new SimulationInstant(60), new SimulationInstant(120), clock, state);
 
         Assert.Single(system.Ticks);
         Assert.Equal(120, system.Ticks[0].ScheduledInstant.TotalSeconds);
@@ -63,8 +65,9 @@ public sealed class SimulationSchedulerTests
         // Split (0, 120] into (0, 60] and (60, 120].
         // t=60 must fire in the first call (inclusive end), not the second (exclusive start).
         var clock = new SimulationClock(SimulationInstant.Epoch);
-        long firstBatch = scheduler.RunDueOccurrences(SimulationInstant.Epoch, new SimulationInstant(60), clock);
-        long secondBatch = scheduler.RunDueOccurrences(new SimulationInstant(60), new SimulationInstant(120), clock);
+        var state = new SimulationState();
+        long firstBatch = scheduler.RunDueOccurrences(SimulationInstant.Epoch, new SimulationInstant(60), clock, state);
+        long secondBatch = scheduler.RunDueOccurrences(new SimulationInstant(60), new SimulationInstant(120), clock, state);
 
         // First batch (0, 60]: t=0 is excluded (Epoch=previousInstant), t=60 fires -> 1 tick.
         Assert.Equal(1, firstBatch);
@@ -88,7 +91,8 @@ public sealed class SimulationSchedulerTests
 
         // First advance seals registration.
         var clock = new SimulationClock(SimulationInstant.Epoch);
-        scheduler.RunDueOccurrences(SimulationInstant.Epoch, new SimulationInstant(60), clock);
+        var state = new SimulationState();
+        scheduler.RunDueOccurrences(SimulationInstant.Epoch, new SimulationInstant(60), clock, state);
 
         // Attempting to register after sealing should throw.
         var system2 = new RecordingSystem("system2");
@@ -105,7 +109,8 @@ public sealed class SimulationSchedulerTests
         scheduler.Register(system, new SchedulingPolicy(SimulationInstant.Epoch, SimulationDuration.FromMinutes(1)));
 
         var clock = new SimulationClock(SimulationInstant.Epoch);
-        scheduler.RunDueOccurrences(SimulationInstant.Epoch, new SimulationInstant(300), clock); // 5 minutes
+        var state = new SimulationState();
+        scheduler.RunDueOccurrences(SimulationInstant.Epoch, new SimulationInstant(300), clock, state); // 5 minutes
 
         Assert.Equal(5, system.Ticks.Count);
         Assert.Equal(60, system.Ticks[0].ScheduledInstant.TotalSeconds);
@@ -123,7 +128,8 @@ public sealed class SimulationSchedulerTests
         scheduler.Register(perHour, new SchedulingPolicy(SimulationInstant.Epoch, SimulationDuration.FromHours(1)));
 
         var clock = new SimulationClock(SimulationInstant.Epoch);
-        scheduler.RunDueOccurrences(SimulationInstant.Epoch, new SimulationInstant((long)SimulationDuration.FromDays(3).TotalSeconds), clock);
+        var state = new SimulationState();
+        scheduler.RunDueOccurrences(SimulationInstant.Epoch, new SimulationInstant((long)SimulationDuration.FromDays(3).TotalSeconds), clock, state);
 
         Assert.Equal(3 * 24 * 60, perMinute.Ticks.Count);
         Assert.Equal(3 * 24, perHour.Ticks.Count);
@@ -145,7 +151,8 @@ public sealed class SimulationSchedulerTests
         scheduler.Register(third, new SchedulingPolicy(SimulationInstant.Epoch, SimulationDuration.FromMinutes(1)));
 
         var clock = new SimulationClock(SimulationInstant.Epoch);
-        scheduler.RunDueOccurrences(SimulationInstant.Epoch, new SimulationInstant(60), clock);
+        var state = new SimulationState();
+        scheduler.RunDueOccurrences(SimulationInstant.Epoch, new SimulationInstant(60), clock, state);
 
         Assert.Equal(s_expectedFirstSecondThird, executionOrder);
     }
@@ -175,7 +182,8 @@ public sealed class SimulationSchedulerTests
         // Simulate 100 years in one huge jump.
         var target = new SimulationInstant((long)SimulationDuration.FromDays(365 * 100).TotalSeconds);
         var clock = new SimulationClock(SimulationInstant.Epoch);
-        scheduler.RunDueOccurrences(SimulationInstant.Epoch, target, clock);
+        var state = new SimulationState();
+        scheduler.RunDueOccurrences(SimulationInstant.Epoch, target, clock, state);
 
         Assert.Equal(365 * 100, system.Ticks.Count);
 
@@ -196,18 +204,20 @@ public sealed class SimulationSchedulerTests
 
         var target = new SimulationInstant((long)SimulationDuration.FromDays(10).TotalSeconds);
         var wholeClock = new SimulationClock(SimulationInstant.Epoch);
-        wholeScheduler.RunDueOccurrences(SimulationInstant.Epoch, target, wholeClock);
+        var wholeState = new SimulationState();
+        wholeScheduler.RunDueOccurrences(SimulationInstant.Epoch, target, wholeClock, wholeState);
 
         var splitScheduler = new SimulationScheduler();
         var splitSystem = new RecordingSystem("split");
         splitScheduler.Register(splitSystem, new SchedulingPolicy(SimulationInstant.Epoch, SimulationDuration.FromHours(1)));
 
         var splitClock = new SimulationClock(SimulationInstant.Epoch);
+        var splitState = new SimulationState();
         SimulationInstant cursor = SimulationInstant.Epoch;
         for (int day = 0; day < 10; day++)
         {
             SimulationInstant next = cursor.Add(SimulationDuration.FromDays(1));
-            splitScheduler.RunDueOccurrences(cursor, next, splitClock);
+            splitScheduler.RunDueOccurrences(cursor, next, splitClock, splitState);
             cursor = next;
         }
 
@@ -226,7 +236,8 @@ public sealed class SimulationSchedulerTests
         scheduler.Register(system, new SchedulingPolicy(SimulationInstant.Epoch, SimulationDuration.FromMinutes(1)));
 
         var clock = new SimulationClock(SimulationInstant.Epoch);
-        scheduler.RunDueOccurrences(new SimulationInstant(30), new SimulationInstant(30), clock);
+        var state = new SimulationState();
+        scheduler.RunDueOccurrences(new SimulationInstant(30), new SimulationInstant(30), clock, state);
 
         Assert.Empty(system.Ticks);
     }
@@ -256,8 +267,9 @@ public sealed class SimulationSchedulerTests
     {
         var scheduler = new SimulationScheduler();
         var clock = new SimulationClock(SimulationInstant.Epoch);
+        var state = new SimulationState();
         Assert.Throws<ArgumentException>(() =>
-            scheduler.RunDueOccurrences(new SimulationInstant(100), new SimulationInstant(50), clock));
+            scheduler.RunDueOccurrences(new SimulationInstant(100), new SimulationInstant(50), clock, state));
     }
 
     /// <summary>
@@ -273,8 +285,9 @@ public sealed class SimulationSchedulerTests
         var throwingSystem = new ThrowingSystem("thrower", new SimulationInstant(120));
         scheduler.Register(throwingSystem, new SchedulingPolicy(SimulationInstant.Epoch, SimulationDuration.FromMinutes(1)));
 
+        var state = new SimulationState();
         var ex = Assert.Throws<InvalidOperationException>(() =>
-            scheduler.RunDueOccurrences(SimulationInstant.Epoch, new SimulationInstant(180), clock));
+            scheduler.RunDueOccurrences(SimulationInstant.Epoch, new SimulationInstant(180), clock, state));
 
         Assert.Contains("Intentional test failure", ex.Message);
         // Clock should be at the instant of the failed tick (t=120), not the target (t=180)
@@ -296,16 +309,17 @@ public sealed class SimulationSchedulerTests
         scheduler.Register(throwingSystem, new SchedulingPolicy(SimulationInstant.Epoch, SimulationDuration.FromMinutes(2)));
         scheduler.Register(recordingSystem, new SchedulingPolicy(SimulationInstant.Epoch, SimulationDuration.FromMinutes(3)));
 
+        var state = new SimulationState();
         // First advance: thrower throws at t=120
         Assert.Throws<InvalidOperationException>(() =>
-            scheduler.RunDueOccurrences(SimulationInstant.Epoch, new SimulationInstant(120), clock));
+            scheduler.RunDueOccurrences(SimulationInstant.Epoch, new SimulationInstant(120), clock, state));
 
         // Clock is at t=120 (where the exception occurred)
         Assert.Equal(120, clock.Current.TotalSeconds);
 
         // Second advance: should work normally from where we left off
         // The recorder should fire at t=180 (its first occurrence after Epoch is at 180s = 3min)
-        scheduler.RunDueOccurrences(new SimulationInstant(120), new SimulationInstant(240), clock);
+        scheduler.RunDueOccurrences(new SimulationInstant(120), new SimulationInstant(240), clock, state);
 
         // Clock advances to target
         Assert.Equal(240, clock.Current.TotalSeconds);

@@ -1,5 +1,6 @@
 using BenchmarkDotNet.Attributes;
 using CapitalismSim.Simulation.Core.Scheduling;
+using CapitalismSim.Simulation.Core.State;
 using CapitalismSim.Simulation.Core.Time;
 
 namespace CapitalismSim.Simulation.Benchmarks.Suites;
@@ -42,14 +43,16 @@ public class SchedulerBenchmarks
     public long FewSystemsOneDay()
     {
         var clock = new SimulationClock(SimulationInstant.Epoch);
-        return _fewSystems.RunDueOccurrences(SimulationInstant.Epoch, SimulationInstant.Epoch.Add(AdvanceWindow), clock);
+        var state = new SimulationState();
+        return _fewSystems.RunDueOccurrences(SimulationInstant.Epoch, SimulationInstant.Epoch.Add(AdvanceWindow), clock, state);
     }
 
     [Benchmark]
     public long ManySystemsOneDay()
     {
         var clock = new SimulationClock(SimulationInstant.Epoch);
-        return _manySystems.RunDueOccurrences(SimulationInstant.Epoch, SimulationInstant.Epoch.Add(AdvanceWindow), clock);
+        var state = new SimulationState();
+        return _manySystems.RunDueOccurrences(SimulationInstant.Epoch, SimulationInstant.Epoch.Add(AdvanceWindow), clock, state);
     }
 
     private sealed class NoOpSystem : ISimulationSystem

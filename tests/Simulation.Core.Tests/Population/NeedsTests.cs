@@ -10,17 +10,15 @@ public sealed class BasicNeedsProfileTests
     [Fact]
     public void Constructor_SetsAllProperties()
     {
-        var food = new Money(500L, CurrencyCode.USD);
-        var housing = new Money(1200L, CurrencyCode.USD);
-        var utilities = new Money(150L, CurrencyCode.USD);
-        var healthcare = new Money(300L, CurrencyCode.USD);
+        var essential = new Money(2500L, CurrencyCode.USD);  // $25/day per person
+        var housing = new Money(4000L, CurrencyCode.USD);     // $40/day housing
+        var utilities = new Money(500L, CurrencyCode.USD);    // $5/day utilities
 
-        var profile = new BasicNeedsProfile(food, housing, utilities, healthcare);
+        var profile = new BasicNeedsProfile(essential, housing, utilities);
 
-        Assert.Equal(food, profile.FoodPerPersonMonthly);
-        Assert.Equal(housing, profile.HousingMonthly);
-        Assert.Equal(utilities, profile.UtilitiesMonthly);
-        Assert.Equal(healthcare, profile.HealthcarePerPersonMonthly);
+        Assert.Equal(essential, profile.DailyEssentialCostPerMember);
+        Assert.Equal(housing, profile.DailyHousingCost);
+        Assert.Equal(utilities, profile.DailyUtilitiesCost);
     }
 
     [Fact]
@@ -28,87 +26,109 @@ public sealed class BasicNeedsProfileTests
     {
         var profile = BasicNeedsProfile.Zero(CurrencyCode.USD);
 
-        Assert.Equal(Money.Zero(CurrencyCode.USD), profile.FoodPerPersonMonthly);
-        Assert.Equal(Money.Zero(CurrencyCode.USD), profile.HousingMonthly);
-        Assert.Equal(Money.Zero(CurrencyCode.USD), profile.UtilitiesMonthly);
-        Assert.Equal(Money.Zero(CurrencyCode.USD), profile.HealthcarePerPersonMonthly);
+        Assert.Equal(Money.Zero(CurrencyCode.USD), profile.DailyEssentialCostPerMember);
+        Assert.Equal(Money.Zero(CurrencyCode.USD), profile.DailyHousingCost);
+        Assert.Equal(Money.Zero(CurrencyCode.USD), profile.DailyUtilitiesCost);
     }
 
     [Fact]
-    public void CalculateTotalMonthly_SumsAllNeeds()
+    public void CalculateTotalDaily_SumsAllNeeds()
     {
         var profile = new BasicNeedsProfile(
-            new Money(500L, CurrencyCode.USD),  // Food per person
-            new Money(1200L, CurrencyCode.USD), // Housing
-            new Money(150L, CurrencyCode.USD),  // Utilities
-            new Money(300L, CurrencyCode.USD)); // Healthcare per person
+            new Money(2500L, CurrencyCode.USD),  // Essential per person
+            new Money(4000L, CurrencyCode.USD),  // Housing
+            new Money(500L, CurrencyCode.USD));  // Utilities
 
-        // For 2 people: 500*2 + 1200 + 150 + 300*2 = 1000 + 1200 + 150 + 600 = 2950
-        var total = profile.CalculateTotalMonthly(2);
+        // For 2 people: 2500*2 + 4000 + 500 = 5000 + 4000 + 500 = 9500
+        var total = profile.CalculateTotalDaily(2);
 
-        Assert.Equal(new Money(2950L, CurrencyCode.USD), total);
+        Assert.Equal(new Money(9500L, CurrencyCode.USD), total);
     }
 
     [Fact]
-    public void CalculateTotalMonthly_ZeroPeople_StillHasFixedCosts()
+    public void CalculateTotalDaily_ZeroPeople_StillHasFixedCosts()
     {
         var profile = new BasicNeedsProfile(
-            new Money(500L, CurrencyCode.USD),
-            new Money(1200L, CurrencyCode.USD),
-            new Money(150L, CurrencyCode.USD),
-            new Money(300L, CurrencyCode.USD));
+            new Money(2500L, CurrencyCode.USD),
+            new Money(4000L, CurrencyCode.USD),
+            new Money(500L, CurrencyCode.USD));
 
-        // For 0 people: 0 + 1200 + 150 + 0 = 1350 (housing and utilities still apply)
-        var total = profile.CalculateTotalMonthly(0);
+        // For 0 people: 0 + 4000 + 500 = 4500 (housing and utilities still apply)
+        var total = profile.CalculateTotalDaily(0);
 
-        Assert.Equal(new Money(1350L, CurrencyCode.USD), total);
+        Assert.Equal(new Money(4500L, CurrencyCode.USD), total);
     }
 
     [Fact]
-    public void CalculateTotalMonthly_NegativePersonCount_Throws()
+    public void CalculateTotalDaily_NegativePersonCount_Throws()
     {
         var profile = BasicNeedsProfile.Zero(CurrencyCode.USD);
 
-        Assert.Throws<ArgumentOutOfRangeException>(() => profile.CalculateTotalMonthly(-1));
+        Assert.Throws<ArgumentOutOfRangeException>(() => profile.CalculateTotalDaily(-1));
     }
 
     [Fact]
-    public void WithFoodPerPersonMonthly_CreatesNewProfile()
+    public void WithDailyEssentialCostPerMember_CreatesNewProfile()
     {
         var original = new BasicNeedsProfile(
-            new Money(500L, CurrencyCode.USD),
-            new Money(1200L, CurrencyCode.USD),
-            new Money(150L, CurrencyCode.USD),
-            new Money(300L, CurrencyCode.USD));
+            new Money(2500L, CurrencyCode.USD),
+            new Money(4000L, CurrencyCode.USD),
+            new Money(500L, CurrencyCode.USD));
 
-        var updated = original.WithFoodPerPersonMonthly(new Money(600L, CurrencyCode.USD));
+        var updated = original.WithDailyEssentialCostPerMember(new Money(3000L, CurrencyCode.USD));
 
-        Assert.Equal(new Money(600L, CurrencyCode.USD), updated.FoodPerPersonMonthly);
-        Assert.Equal(original.HousingMonthly, updated.HousingMonthly);
-        Assert.Equal(original.UtilitiesMonthly, updated.UtilitiesMonthly);
-        Assert.Equal(original.HealthcarePerPersonMonthly, updated.HealthcarePerPersonMonthly);
+        Assert.Equal(new Money(3000L, CurrencyCode.USD), updated.DailyEssentialCostPerMember);
+        Assert.Equal(original.DailyHousingCost, updated.DailyHousingCost);
+        Assert.Equal(original.DailyUtilitiesCost, updated.DailyUtilitiesCost);
+    }
+
+    [Fact]
+    public void WithDailyHousingCost_CreatesNewProfile()
+    {
+        var original = new BasicNeedsProfile(
+            new Money(2500L, CurrencyCode.USD),
+            new Money(4000L, CurrencyCode.USD),
+            new Money(500L, CurrencyCode.USD));
+
+        var updated = original.WithDailyHousingCost(new Money(5000L, CurrencyCode.USD));
+
+        Assert.Equal(original.DailyEssentialCostPerMember, updated.DailyEssentialCostPerMember);
+        Assert.Equal(new Money(5000L, CurrencyCode.USD), updated.DailyHousingCost);
+        Assert.Equal(original.DailyUtilitiesCost, updated.DailyUtilitiesCost);
+    }
+
+    [Fact]
+    public void WithDailyUtilitiesCost_CreatesNewProfile()
+    {
+        var original = new BasicNeedsProfile(
+            new Money(2500L, CurrencyCode.USD),
+            new Money(4000L, CurrencyCode.USD),
+            new Money(500L, CurrencyCode.USD));
+
+        var updated = original.WithDailyUtilitiesCost(new Money(750L, CurrencyCode.USD));
+
+        Assert.Equal(original.DailyEssentialCostPerMember, updated.DailyEssentialCostPerMember);
+        Assert.Equal(original.DailyHousingCost, updated.DailyHousingCost);
+        Assert.Equal(new Money(750L, CurrencyCode.USD), updated.DailyUtilitiesCost);
     }
 
     [Fact]
     public void Equality_IsValueBased()
     {
         var a = new BasicNeedsProfile(
-            new Money(500L, CurrencyCode.USD),
-            new Money(1200L, CurrencyCode.USD),
-            new Money(150L, CurrencyCode.USD),
-            new Money(300L, CurrencyCode.USD));
+            new Money(2500L, CurrencyCode.USD),
+            new Money(4000L, CurrencyCode.USD),
+            new Money(500L, CurrencyCode.USD));
 
         var b = new BasicNeedsProfile(
-            new Money(500L, CurrencyCode.USD),
-            new Money(1200L, CurrencyCode.USD),
-            new Money(150L, CurrencyCode.USD),
-            new Money(300L, CurrencyCode.USD));
+            new Money(2500L, CurrencyCode.USD),
+            new Money(4000L, CurrencyCode.USD),
+            new Money(500L, CurrencyCode.USD));
 
         var c = new BasicNeedsProfile(
-            new Money(600L, CurrencyCode.USD),
-            new Money(1200L, CurrencyCode.USD),
-            new Money(150L, CurrencyCode.USD),
-            new Money(300L, CurrencyCode.USD));
+            new Money(3000L, CurrencyCode.USD),
+            new Money(4000L, CurrencyCode.USD),
+            new Money(500L, CurrencyCode.USD));
 
         Assert.Equal(a, b);
         Assert.True(a == b);
@@ -125,17 +145,18 @@ public sealed class HouseholdNeedsStateTests
     {
         var householdId = new HouseholdId(new EntityId(1));
         var profile = new BasicNeedsProfile(
-            new Money(500L, Currency),
-            new Money(1200L, Currency),
-            new Money(150L, Currency),
-            new Money(300L, Currency));
+            new Money(2500L, Currency),
+            new Money(4000L, Currency),
+            new Money(500L, Currency));
 
         var state = new HouseholdNeedsState(householdId, profile, 2);
 
         Assert.Equal(householdId, state.HouseholdId);
         Assert.Equal(profile, state.NeedsProfile);
-        Assert.Equal(new Money(2950L, Currency), state.TotalNeedsMonthly);
-        Assert.Equal(Money.Zero(Currency), state.SatisfiedNeedsMonthly);
+        Assert.Equal(new Money(9500L, Currency), state.TotalNeedsDaily);
+        Assert.Equal(Money.Zero(Currency), state.SatisfiedToday);
+        Assert.Equal(0, state.ConsecutiveShortfallDays);
+        Assert.Equal(Money.Zero(Currency), state.CumulativeShortfall);
     }
 
     [Fact]
@@ -143,7 +164,6 @@ public sealed class HouseholdNeedsStateTests
     {
         var householdId = new HouseholdId(new EntityId(1));
         var profile = new BasicNeedsProfile(
-            new Money(500L, Currency),
             new Money(1000L, Currency),
             Money.Zero(Currency),
             Money.Zero(Currency));
@@ -160,7 +180,6 @@ public sealed class HouseholdNeedsStateTests
         var profile = new BasicNeedsProfile(
             new Money(1000L, Currency),
             Money.Zero(Currency),
-            Money.Zero(Currency),
             Money.Zero(Currency));
 
         var state = new HouseholdNeedsState(householdId, profile, 1);
@@ -175,7 +194,6 @@ public sealed class HouseholdNeedsStateTests
         var householdId = new HouseholdId(new EntityId(1));
         var profile = new BasicNeedsProfile(
             new Money(1000L, Currency),
-            Money.Zero(Currency),
             Money.Zero(Currency),
             Money.Zero(Currency));
 
@@ -192,7 +210,6 @@ public sealed class HouseholdNeedsStateTests
         var profile = new BasicNeedsProfile(
             new Money(1000L, Currency),
             Money.Zero(Currency),
-            Money.Zero(Currency),
             Money.Zero(Currency));
 
         var state = new HouseholdNeedsState(householdId, profile, 1);
@@ -207,7 +224,6 @@ public sealed class HouseholdNeedsStateTests
         var householdId = new HouseholdId(new EntityId(1));
         var profile = new BasicNeedsProfile(
             new Money(1000L, Currency),
-            Money.Zero(Currency),
             Money.Zero(Currency),
             Money.Zero(Currency));
 
@@ -224,7 +240,6 @@ public sealed class HouseholdNeedsStateTests
         var profile = new BasicNeedsProfile(
             new Money(1000L, Currency),
             Money.Zero(Currency),
-            Money.Zero(Currency),
             Money.Zero(Currency));
 
         var state = new HouseholdNeedsState(householdId, profile, 1);
@@ -240,14 +255,13 @@ public sealed class HouseholdNeedsStateTests
         var profile = new BasicNeedsProfile(
             new Money(1000L, Currency),
             Money.Zero(Currency),
-            Money.Zero(Currency),
             Money.Zero(Currency));
 
         var state = new HouseholdNeedsState(householdId, profile, 1);
         state.RecordSatisfaction(new Money(300L, Currency));
         state.RecordSatisfaction(new Money(200L, Currency));
 
-        Assert.Equal(new Money(500L, Currency), state.SatisfiedNeedsMonthly);
+        Assert.Equal(new Money(500L, Currency), state.SatisfiedToday);
     }
 
     [Fact]
@@ -256,7 +270,6 @@ public sealed class HouseholdNeedsStateTests
         var householdId = new HouseholdId(new EntityId(1));
         var profile = new BasicNeedsProfile(
             new Money(1000L, Currency),
-            Money.Zero(Currency),
             Money.Zero(Currency),
             Money.Zero(Currency));
 
@@ -267,20 +280,81 @@ public sealed class HouseholdNeedsStateTests
     }
 
     [Fact]
-    public void ResetForNewPeriod_ClearsSatisfaction()
+    public void FinalizeDay_ClearsSatisfiedToday()
     {
         var householdId = new HouseholdId(new EntityId(1));
         var profile = new BasicNeedsProfile(
             new Money(1000L, Currency),
             Money.Zero(Currency),
+            Money.Zero(Currency));
+
+        var state = new HouseholdNeedsState(householdId, profile, 1);
+        state.RecordSatisfaction(new Money(500L, Currency));
+        state.FinalizeDay();
+
+        Assert.Equal(Money.Zero(Currency), state.SatisfiedToday);
+    }
+
+    [Fact]
+    public void FinalizeDay_WithShortfall_IncrementsConsecutiveDays()
+    {
+        var householdId = new HouseholdId(new EntityId(1));
+        var profile = new BasicNeedsProfile(
+            new Money(1000L, Currency),
             Money.Zero(Currency),
             Money.Zero(Currency));
 
         var state = new HouseholdNeedsState(householdId, profile, 1);
         state.RecordSatisfaction(new Money(500L, Currency));
-        state.ResetForNewPeriod();
+        state.FinalizeDay();
 
-        Assert.Equal(Money.Zero(Currency), state.SatisfiedNeedsMonthly);
+        Assert.Equal(1, state.ConsecutiveShortfallDays);
+        Assert.Equal(new Money(500L, Currency), state.CumulativeShortfall);
+    }
+
+    [Fact]
+    public void FinalizeDay_WithFullPayment_ResetsConsecutiveDays()
+    {
+        var householdId = new HouseholdId(new EntityId(1));
+        var profile = new BasicNeedsProfile(
+            new Money(1000L, Currency),
+            Money.Zero(Currency),
+            Money.Zero(Currency));
+
+        var state = new HouseholdNeedsState(householdId, profile, 1);
+
+        // Day 1: shortfall
+        state.RecordSatisfaction(new Money(500L, Currency));
+        state.FinalizeDay();
+        Assert.Equal(1, state.ConsecutiveShortfallDays);
+
+        // Day 2: full payment
+        state.RecordSatisfaction(new Money(1000L, Currency));
+        state.FinalizeDay();
+
+        Assert.Equal(0, state.ConsecutiveShortfallDays);
+    }
+
+    [Fact]
+    public void FinalizeDay_AccumulatesCumulativeShortfall()
+    {
+        var householdId = new HouseholdId(new EntityId(1));
+        var profile = new BasicNeedsProfile(
+            new Money(1000L, Currency),
+            Money.Zero(Currency),
+            Money.Zero(Currency));
+
+        var state = new HouseholdNeedsState(householdId, profile, 1);
+
+        // Day 1: 500 shortfall
+        state.RecordSatisfaction(new Money(500L, Currency));
+        state.FinalizeDay();
+        Assert.Equal(new Money(500L, Currency), state.CumulativeShortfall);
+
+        // Day 2: 300 shortfall
+        state.RecordSatisfaction(new Money(700L, Currency));
+        state.FinalizeDay();
+        Assert.Equal(new Money(800L, Currency), state.CumulativeShortfall);
     }
 
     [Fact]
@@ -289,7 +363,6 @@ public sealed class HouseholdNeedsStateTests
         var householdId = new HouseholdId(new EntityId(1));
         var profile = new BasicNeedsProfile(
             new Money(1000L, Currency),
-            Money.Zero(Currency),
             Money.Zero(Currency),
             Money.Zero(Currency));
 
@@ -308,7 +381,6 @@ public sealed class HouseholdNeedsStateTests
         var profile = new BasicNeedsProfile(
             new Money(1000L, Currency),
             Money.Zero(Currency),
-            Money.Zero(Currency),
             Money.Zero(Currency));
 
         var state = new HouseholdNeedsState(householdId, profile, 1);
@@ -326,7 +398,6 @@ public sealed class HouseholdNeedsStateTests
         var originalProfile = new BasicNeedsProfile(
             new Money(1000L, Currency),
             Money.Zero(Currency),
-            Money.Zero(Currency),
             Money.Zero(Currency));
 
         var state = new HouseholdNeedsState(householdId, originalProfile, 1);
@@ -334,12 +405,33 @@ public sealed class HouseholdNeedsStateTests
         var newProfile = new BasicNeedsProfile(
             new Money(2000L, Currency),
             Money.Zero(Currency),
-            Money.Zero(Currency),
             Money.Zero(Currency));
 
         state.UpdateNeedsProfile(newProfile, 1);
 
         Assert.Equal(newProfile, state.NeedsProfile);
-        Assert.Equal(new Money(2000L, Currency), state.TotalNeedsMonthly);
+        Assert.Equal(new Money(2000L, Currency), state.TotalNeedsDaily);
+    }
+
+    [Fact]
+    public void Clone_CreatesDeepCopy()
+    {
+        var householdId = new HouseholdId(new EntityId(1));
+        var profile = new BasicNeedsProfile(
+            new Money(1000L, Currency),
+            Money.Zero(Currency),
+            Money.Zero(Currency));
+
+        var original = new HouseholdNeedsState(householdId, profile, 1);
+        original.RecordSatisfaction(new Money(500L, Currency));
+        original.FinalizeDay();
+
+        var clone = original.Clone();
+
+        Assert.Equal(original.HouseholdId, clone.HouseholdId);
+        Assert.Equal(original.TotalNeedsDaily, clone.TotalNeedsDaily);
+        Assert.Equal(original.SatisfiedToday, clone.SatisfiedToday);
+        Assert.Equal(original.ConsecutiveShortfallDays, clone.ConsecutiveShortfallDays);
+        Assert.Equal(original.CumulativeShortfall, clone.CumulativeShortfall);
     }
 }

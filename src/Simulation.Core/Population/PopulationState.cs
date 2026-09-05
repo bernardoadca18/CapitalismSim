@@ -155,11 +155,21 @@ public sealed class PopulationState
     /// Atomically adds multiple people to the population.
     /// Pre-validates all people before any mutation.
     /// </summary>
+    /// <remarks>
+    /// Detects duplicate IDs WITHIN the batch before any mutation.
+    /// An invalid batch will not partially modify state.
+    /// </remarks>
     public void AddPeople(IReadOnlyList<Person> people)
     {
         ArgumentNullException.ThrowIfNull(people);
 
-        // Pre-validate all people
+        if (people.Count == 0)
+        {
+            return;
+        }
+
+        // Detect duplicates WITHIN the batch first
+        var batchIds = new HashSet<PersonId>(people.Count);
         foreach (var person in people)
         {
             if (person.IsNone)
@@ -167,6 +177,16 @@ public sealed class PopulationState
                 throw new ArgumentException("Cannot add Person.None to population.", nameof(people));
             }
 
+            if (!batchIds.Add(person.Id))
+            {
+                throw new InvalidOperationException(
+                    $"Batch contains duplicate person ID {person.Id}.");
+            }
+        }
+
+        // Pre-validate all people against existing state
+        foreach (var person in people)
+        {
             if (_individuals.ContainsKey(person.Id))
             {
                 throw new InvalidOperationException($"Person {person.Id} already exists in population.");
@@ -198,6 +218,86 @@ public sealed class PopulationState
                 GetHousehold(person.HouseholdId)?.AddMember(person.Id);
             }
         }
+    }
+
+    /// <summary>
+    /// Atomically moves a person from one household to another.
+    /// Pre-validates all constraints before any mutation.
+    /// </summary>
+    /// <remarks>
+    /// This operation:
+    /// 1. Validates the person exists and currently belongs to the source household
+    /// 2. Validates the destination household exists
+    /// 3. Updates the person's HouseholdId
+    /// 4. Removes the person from the source household's member list
+    /// 5. Adds the person to the destination household's member list
+    ///
+    /// If any validation fails, no state is changed.
+    /// </remarks>
+    public void MovePerson(PersonId personId, HouseholdId destinationHouseholdId)
+    {
+        if (personId.IsNone)
+        {
+            throw new ArgumentException("Cannot move PersonId.None.", nameof(personId));
+        }
+
+        if (destinationHouseholdId.IsNone)
+        {
+            throw new ArgumentException("Cannot move person to HouseholdId.None.", nameof(destinationHouseholdId));
+        }
+
+        // Pre-validate: person exists
+        var person = GetPerson(personId);
+        if (person.IsNone)
+        {
+            throw new InvalidOperationException($"Person {personId} does not exist in population.");
+        }
+
+        // Pre-validate: source household exists and person is a member
+        if (person.HouseholdId.IsNone)
+        {
+            throw new InvalidOperationException(
+                $"Person {personId} is not a member of any household.");
+        }
+
+        var sourceHousehold = GetHousehold(person.HouseholdId);
+        if (sourceHousehold is null)
+        {
+            throw new InvalidOperationException(
+                $"Source household {person.HouseholdId} does not exist.");
+        }
+
+        if (!sourceHousehold.HasMember(personId))
+        {
+            throw new InvalidOperationException(
+                $"Person {personId} is not a member of household {person.HouseholdId}.");
+        }
+
+        // Pre-validate: destination household exists
+        var destHousehold = GetHousehold(destinationHouseholdId);
+        if (destHousehold is null)
+        {
+            throw new InvalidOperationException(
+                $"Destination household {destinationHouseholdId} does not exist.");
+        }
+
+        // Pre-validate: person is not already in destination household
+        if (destHousehold.HasMember(personId))
+        {
+            throw new InvalidOperationException(
+                $"Person {personId} is already a member of destination household {destinationHouseholdId}.");
+        }
+
+        // All validations passed - perform mutations atomically
+        // 1. Update person's HouseholdId
+        var updatedPerson = person.WithHouseholdId(destinationHouseholdId);
+        _individuals[personId] = updatedPerson;
+
+        // 2. Remove from source household
+        sourceHousehold.RemoveMember(personId);
+
+        // 3. Add to destination household
+        destHousehold.AddMember(personId);
     }
 
     /// <summary>
@@ -287,6 +387,125 @@ public sealed class PopulationState
     /// Gets all household IDs that have needs state tracked.
     /// </summary>
     public IEnumerable<HouseholdId> GetAllHouseholdIdsWithNeedsState() => _householdNeeds.Keys;
+
+    #endregion
+
+    #region Validation
+
+    /// <summary>
+    /// Validates that all detailed persons with personal accounts have correct ownership.
+    /// </summary>
+    /// <param name="ledger">The money ledger to validate account ownership against.</param>
+    /// <returns>A validation result indicating success or listing all violations.</returns>
+    /// <remarks>
+    /// This validates that for each person with a non-none PersonalAccountId:
+    /// - The account exists in the ledger
+    /// - The account's owner matches the person's EntityId
+    ///
+    /// This should be called at validation boundaries (e.g., after loading a snapshot).
+    /// </remarks>
+    public PopulationValidationResult ValidatePersonalAccounts(Economics.MoneyLedger ledger)
+    {
+        ArgumentNullException.ThrowIfNull(ledger);
+
+        var violations = new List<string>();
+
+        foreach (var (personId, person) in _individuals)
+        {
+            if (person.PersonalAccountId.IsNone)
+            {
+                continue; // No personal account, nothing to validate
+            }
+
+            var accountId = person.PersonalAccountId;
+
+            // Check that the account exists
+            var owner = ledger.GetOwner(accountId);
+            if (owner.IsNone)
+            {
+                violations.Add(
+                    $"Person {personId} has personal account {accountId} which does not exist in ledger.");
+                continue;
+            }
+
+            // Check that the owner matches
+            if (owner != personId.EntityId)
+            {
+                violations.Add(
+                    $"Person {personId} has personal account {accountId} owned by {owner}, expected {personId.EntityId}.");
+            }
+        }
+
+        return violations.Count == 0
+            ? PopulationValidationResult.Success()
+            : PopulationValidationResult.Failure(violations);
+    }
+
+    /// <summary>
+    /// Validates the integrity of the entire population state.
+    /// </summary>
+    /// <param name="ledger">The money ledger to validate account ownership against.</param>
+    /// <returns>A validation result indicating success or listing all violations.</returns>
+    /// <remarks>
+    /// Performs comprehensive validation including:
+    /// - Personal account ownership
+    /// - Household membership consistency (person's HouseholdId matches household's member list)
+    /// - No orphaned persons (person references non-existent household)
+    /// - No phantom members (household references non-existent person)
+    /// </remarks>
+    public PopulationValidationResult ValidateIntegrity(Economics.MoneyLedger ledger)
+    {
+        ArgumentNullException.ThrowIfNull(ledger);
+
+        var violations = new List<string>();
+
+        // Validate personal accounts
+        var accountResult = ValidatePersonalAccounts(ledger);
+        if (!accountResult.IsValid)
+        {
+            violations.AddRange(accountResult.Violations);
+        }
+
+        // Validate household membership consistency
+        foreach (var (personId, person) in _individuals)
+        {
+            if (person.HouseholdId.IsNone)
+            {
+                continue; // Person without household is valid
+            }
+
+            var household = GetHousehold(person.HouseholdId);
+            if (household is null)
+            {
+                violations.Add(
+                    $"Person {personId} references non-existent household {person.HouseholdId}.");
+                continue;
+            }
+
+            if (!household.HasMember(personId))
+            {
+                violations.Add(
+                    $"Person {personId} has HouseholdId {person.HouseholdId} but is not in that household's member list.");
+            }
+        }
+
+        // Validate no phantom members
+        foreach (var (householdId, household) in _households)
+        {
+            foreach (var memberId in household.Members)
+            {
+                if (!_individuals.ContainsKey(memberId))
+                {
+                    violations.Add(
+                        $"Household {householdId} has member {memberId} who does not exist in population.");
+                }
+            }
+        }
+
+        return violations.Count == 0
+            ? PopulationValidationResult.Success()
+            : PopulationValidationResult.Failure(violations);
+    }
 
     #endregion
 

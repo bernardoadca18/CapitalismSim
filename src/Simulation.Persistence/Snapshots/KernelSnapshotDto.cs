@@ -66,6 +66,9 @@ public sealed record PopulationSnapshotDto
 
     /// <summary>All population cohorts (aggregated groups for LOD).</summary>
     public required IReadOnlyList<CohortSnapshotDto> Cohorts { get; init; }
+
+    /// <summary>Household needs states for tracked households.</summary>
+    public required IReadOnlyList<HouseholdNeedsSnapshotDto> HouseholdNeeds { get; init; }
 }
 
 /// <summary>Snapshot of an individual person.</summary>
@@ -77,8 +80,8 @@ public sealed record PersonSnapshotDto
     /// <summary>The household this person belongs to (0 if none).</summary>
     public required long HouseholdId { get; init; }
 
-    /// <summary>The person's age in simulation years.</summary>
-    public required int Age { get; init; }
+    /// <summary>The simulation day the person was born (relative to epoch). Negative = born before epoch.</summary>
+    public required long BirthDayIndex { get; init; }
 
     /// <summary>The person's personal account ID (0 if none).</summary>
     public required long PersonalAccountId { get; init; }
@@ -108,6 +111,28 @@ public sealed record CohortSnapshotDto
 
     /// <summary>The household this cohort belongs to (0 if unattached).</summary>
     public required long HouseholdId { get; init; }
+}
+
+/// <summary>Snapshot of household needs state.</summary>
+public sealed record HouseholdNeedsSnapshotDto
+{
+    /// <summary>The household's entity ID.</summary>
+    public required long HouseholdId { get; init; }
+
+    /// <summary>Daily essential cost per member (minor units).</summary>
+    public required long DailyEssentialCostPerMember { get; init; }
+
+    /// <summary>Daily housing cost (minor units).</summary>
+    public required long DailyHousingCost { get; init; }
+
+    /// <summary>Daily utilities cost (minor units).</summary>
+    public required long DailyUtilitiesCost { get; init; }
+
+    /// <summary>Number of consecutive days with shortfall.</summary>
+    public required int ConsecutiveShortfallDays { get; init; }
+
+    /// <summary>Cumulative shortfall amount (minor units).</summary>
+    public required long CumulativeShortfall { get; init; }
 }
 
 /// <summary>

@@ -78,6 +78,12 @@ public static class KernelSnapshotReader
             ValidateMoneyLedgerSnapshot(snapshot.MoneyLedger);
         }
 
+        // Cross-reference validation between Population and MoneyLedger
+        if (snapshot.Population is not null && snapshot.MoneyLedger is not null)
+        {
+            ValidateCrossReferences(snapshot.Population, snapshot.MoneyLedger);
+        }
+
         // Apply kernel state
         engine.Clock.Restore(new SimulationInstant(snapshot.CurrentInstantSeconds));
         engine.EntityIds.Restore(snapshot.NextEntityId);
@@ -113,7 +119,7 @@ public static class KernelSnapshotReader
             var p = new Person(
                 new PersonId(new EntityId(person.PersonId)),
                 new HouseholdId(new EntityId(person.HouseholdId)),
-                person.Age,
+                person.BirthDayIndex,
                 person.PersonalAccountId > 0
                     ? new AccountId(new EntityId(person.PersonalAccountId))
                     : AccountId.None);
@@ -131,31 +137,47 @@ public static class KernelSnapshotReader
                     : HouseholdId.None);
             state.SetCohort(c);
         }
+
+        // Restore household needs states
+        if (population.HouseholdNeeds is not null)
+        {
+            var currency = engine.State.MoneyLedger.Currency;
+            foreach (var needs in population.HouseholdNeeds)
+            {
+                var householdId = new HouseholdId(new EntityId(needs.HouseholdId));
+                var profile = new BasicNeedsProfile(
+                    new Money(needs.DailyEssentialCostPerMember, currency),
+                    new Money(needs.DailyHousingCost, currency),
+                    new Money(needs.DailyUtilitiesCost, currency));
+
+                var household = state.GetHousehold(householdId);
+                if (household is not null)
+                {
+                    var needsState = new HouseholdNeedsState(householdId, profile, household.MemberCount);
+                    // Restore shortfall tracking by simulating shortfall days
+                    for (int i = 0; i < needs.ConsecutiveShortfallDays; i++)
+                    {
+                        needsState.RecordSatisfaction(Money.Zero(currency));
+                        needsState.FinalizeDay();
+                    }
+
+                    state.SetHouseholdNeedsState(needsState);
+                }
+            }
+        }
     }
 
     private static void ApplyMoneyLedger(SimulationEngine engine, MoneyLedgerSnapshotDto moneyLedger)
     {
         var ledger = engine.State.MoneyLedger;
 
-        // Create accounts with owners
-        foreach (var account in moneyLedger.Accounts)
-        {
-            ledger.CreateAccount(
-                new AccountId(new EntityId(account.AccountId)),
-                new EntityId(account.OwnerId));
-        }
+        // Prepare account data for direct restoration
+        var accounts = moneyLedger.Accounts.Select(a =>
+            (new AccountId(new EntityId(a.AccountId)),
+             new EntityId(a.OwnerId),
+             a.BalanceMinorUnits));
 
-        // Apply balances via external credit
-        foreach (var account in moneyLedger.Accounts)
-        {
-            if (account.BalanceMinorUnits > 0)
-            {
-                ledger.ExternalCredit(
-                    new AccountId(new EntityId(account.AccountId)),
-                    new Money(account.BalanceMinorUnits, ledger.Currency),
-                    MoneyFlowReason.InitialEndowment);
-            }
-        }
+        ledger.Restore(accounts, moneyLedger.TotalExternalCredits, moneyLedger.TotalExternalDebits);
     }
 
     private static void ValidatePopulationSnapshot(PopulationSnapshotDto population)
@@ -183,11 +205,7 @@ public static class KernelSnapshotReader
                     $"Person snapshot has invalid PersonId {person.PersonId}; must be non-negative.");
             }
 
-            if (person.Age < 0)
-            {
-                throw new SnapshotFormatException(
-                    $"Person snapshot has invalid Age {person.Age}; must be non-negative.");
-            }
+            // BirthDayIndex can be negative (born before epoch), so no range validation needed
         }
 
         foreach (var household in population.Households)
@@ -285,6 +303,55 @@ public static class KernelSnapshotReader
         {
             throw new SnapshotFormatException(
                 $"MoneyLedger snapshot has invalid TotalExternalDebits {moneyLedger.TotalExternalDebits}; must be non-negative.");
+        }
+    }
+
+    private static void ValidateCrossReferences(PopulationSnapshotDto population, MoneyLedgerSnapshotDto moneyLedger)
+    {
+        var householdIds = new HashSet<long>(population.Households.Select(h => h.HouseholdId));
+        var accountIds = new HashSet<long>(moneyLedger.Accounts.Select(a => a.AccountId));
+
+        // Validate persons reference existing households
+        foreach (var person in population.Individuals)
+        {
+            if (person.HouseholdId > 0 && !householdIds.Contains(person.HouseholdId))
+            {
+                throw new SnapshotFormatException(
+                    $"Person {person.PersonId} references non-existent household {person.HouseholdId}.");
+            }
+        }
+
+        // Validate households reference existing accounts
+        foreach (var household in population.Households)
+        {
+            if (!accountIds.Contains(household.AccountId))
+            {
+                throw new SnapshotFormatException(
+                    $"Household {household.HouseholdId} references non-existent account {household.AccountId}.");
+            }
+        }
+
+        // Validate cohorts reference existing households (0 means unattached)
+        foreach (var cohort in population.Cohorts)
+        {
+            if (cohort.HouseholdId > 0 && !householdIds.Contains(cohort.HouseholdId))
+            {
+                throw new SnapshotFormatException(
+                    $"Cohort {cohort.CohortId} references non-existent household {cohort.HouseholdId}.");
+            }
+        }
+
+        // Validate household needs reference existing households
+        if (population.HouseholdNeeds is not null)
+        {
+            foreach (var needs in population.HouseholdNeeds)
+            {
+                if (!householdIds.Contains(needs.HouseholdId))
+                {
+                    throw new SnapshotFormatException(
+                        $"HouseholdNeeds references non-existent household {needs.HouseholdId}.");
+                }
+            }
         }
     }
 }

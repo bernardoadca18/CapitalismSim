@@ -1,13 +1,14 @@
 using CapitalismSim.Simulation.Core.Economics;
 using CapitalismSim.Simulation.Core.Entities;
 using CapitalismSim.Simulation.Core.Population;
+using CapitalismSim.Simulation.Core.Scheduling;
 using CapitalismSim.Simulation.Core.State;
 using CapitalismSim.Simulation.Core.Time;
 
 namespace CapitalismSim.Simulation.Core.Systems;
 
 /// <summary>
-/// A simulation system that processes household needs on a periodic basis.
+/// A simulation system that processes household needs on a daily basis.
 /// Each tick, it withdraws money from household accounts to "pay for" basic needs
 /// and records the satisfaction level.
 /// </summary>
@@ -19,11 +20,12 @@ namespace CapitalismSim.Simulation.Core.Systems;
 /// a shortfall.
 /// </para>
 /// <para>
-/// The system runs on a monthly cadence (every 30 days). On each tick:
-/// 1. For each household, calculate total monthly needs based on member count
+/// The system runs on a daily cadence. On each tick:
+/// 1. For each household, calculate total daily needs based on member count
 /// 2. Withdraw the lesser of (needs, account balance) from the household account
 /// 3. Record the satisfied amount in HouseholdNeedsState
-/// 4. Money is destroyed via ExternalDebit (represents consumption)
+/// 4. Finalize the day (update consecutive shortfall tracking)
+/// 5. Money is destroyed via ExternalDebit (represents consumption)
 /// </para>
 /// <para>
 /// Future phases will add:
@@ -57,7 +59,7 @@ public sealed class HouseholdNeedsSystem : ISimulationSystem
     }
 
     /// <summary>
-    /// Processes household needs for one period. Called by the scheduler.
+    /// Processes household needs for one day. Called by the scheduler.
     /// </summary>
     public void Tick(in SimulationTickContext context)
     {
@@ -86,7 +88,7 @@ public sealed class HouseholdNeedsSystem : ISimulationSystem
             return; // No members, no needs
         }
 
-        Money totalNeeds = _needsProfile.CalculateTotalMonthly(memberCount);
+        Money totalNeeds = _needsProfile.CalculateTotalDaily(memberCount);
         if (totalNeeds.IsZero)
         {
             return; // No needs to satisfy
@@ -104,24 +106,25 @@ public sealed class HouseholdNeedsSystem : ISimulationSystem
             ledger.ExternalDebit(accountId, amountToSpend, MoneyFlowReason.BasicNeeds);
         }
 
-        // Record satisfaction for this household
-        RecordHouseholdSatisfaction(household.Id, amountToSpend, population);
+        // Record satisfaction for this household and finalize the day
+        RecordAndFinalizeDay(household.Id, amountToSpend, memberCount, population);
     }
 
-    private void RecordHouseholdSatisfaction(HouseholdId householdId, Money satisfied, PopulationState population)
+    private void RecordAndFinalizeDay(HouseholdId householdId, Money satisfied, int memberCount, PopulationState population)
     {
         var existingState = population.GetHouseholdNeedsState(householdId);
         if (existingState is not null)
         {
-            // Add to existing satisfaction
+            // Record satisfaction and finalize the day
             existingState.RecordSatisfaction(satisfied);
+            existingState.FinalizeDay();
         }
         else
         {
-            // Create new state and record satisfaction
-            // Note: member count is retrieved from household in ProcessHouseholdNeeds
-            var newState = new HouseholdNeedsState(householdId, _needsProfile, memberCount: 0);
+            // Create new state, record satisfaction, and finalize the day
+            var newState = new HouseholdNeedsState(householdId, _needsProfile, memberCount);
             newState.RecordSatisfaction(satisfied);
+            newState.FinalizeDay();
             population.SetHouseholdNeedsState(newState);
         }
     }
@@ -132,13 +135,12 @@ public sealed class HouseholdNeedsSystem : ISimulationSystem
     /// </summary>
     public static BasicNeedsProfile CreateDefaultNeedsProfile(CurrencyCode currency)
     {
-        // Default monthly costs (in minor units)
-        // These are reasonable defaults for a developed economy
+        // Default daily costs (in minor units)
+        // Derived from typical monthly costs divided by 30
         return new BasicNeedsProfile(
-            foodPerPersonMonthly: new Money(30000, currency),    // $300/month per person
-            housingMonthly: new Money(120000, currency),         // $1200/month rent
-            utilitiesMonthly: new Money(15000, currency),        // $150/month utilities
-            healthcarePerPersonMonthly: new Money(20000, currency) // $200/month per person
+            dailyEssentialCostPerMember: new Money(2500, currency),    // ~$75/day per person (food + healthcare)
+            dailyHousingCost: new Money(4000, currency),               // ~$120/day rent (~$3600/month)
+            dailyUtilitiesCost: new Money(500, currency)               // ~$15/day utilities
         );
     }
 }
