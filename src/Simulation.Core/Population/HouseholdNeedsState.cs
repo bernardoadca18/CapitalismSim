@@ -130,4 +130,27 @@ public sealed class HouseholdNeedsState
             CumulativeShortfall = CumulativeShortfall,
         };
     }
+
+    /// <summary>
+    /// Restores shortfall tracking state directly from a snapshot.
+    /// Used by persistence layer to restore state without simulation.
+    /// </summary>
+    internal void Restore(int consecutiveShortfallDays, Money cumulativeShortfall)
+    {
+        if (consecutiveShortfallDays < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(consecutiveShortfallDays),
+                "ConsecutiveShortfallDays cannot be negative.");
+        }
+
+        if (cumulativeShortfall.Currency != TotalNeedsDaily.Currency)
+        {
+            throw new ArgumentException(
+                $"CumulativeShortfall currency {cumulativeShortfall.Currency} does not match needs currency {TotalNeedsDaily.Currency}.",
+                nameof(cumulativeShortfall));
+        }
+
+        ConsecutiveShortfallDays = consecutiveShortfallDays;
+        CumulativeShortfall = cumulativeShortfall;
+    }
 }

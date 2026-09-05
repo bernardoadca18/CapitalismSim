@@ -200,12 +200,10 @@ public static class SimulationSnapshotReader
                 if (household is not null)
                 {
                     var needsState = new HouseholdNeedsState(householdId, profile, household.MemberCount);
-                    // Restore shortfall tracking by simulating shortfall days
-                    for (int i = 0; i < needs.ConsecutiveShortfallDays; i++)
-                    {
-                        needsState.RecordSatisfaction(Money.Zero(currency));
-                        needsState.FinalizeDay();
-                    }
+                    // Restore shortfall tracking directly from snapshot
+                    needsState.Restore(
+                        needs.ConsecutiveShortfallDays,
+                        new Money(needs.CumulativeShortfall, currency));
 
                     state.SetHouseholdNeedsState(needsState);
                 }
@@ -554,10 +552,10 @@ public static class SimulationSnapshotReader
                     $"EmploymentContract {contract.EmploymentContractId} has invalid StartDayIndex {contract.StartDayIndex}; must be non-negative.");
             }
 
-            if (contract.EndDayIndex < 0)
+            if (contract.EndDayIndex < -1)
             {
                 throw new SnapshotFormatException(
-                    $"EmploymentContract {contract.EmploymentContractId} has invalid EndDayIndex {contract.EndDayIndex}; must be non-negative.");
+                    $"EmploymentContract {contract.EmploymentContractId} has invalid EndDayIndex {contract.EndDayIndex}; must be -1 (active) or >= 0 (terminated).");
             }
 
             if (contract.PayAmountMinorUnits < 0)
@@ -684,8 +682,8 @@ public static class SimulationSnapshotReader
                 contractDto.PayAmountMinorUnits,
                 contractDto.PayIntervalDays);
 
-            // If contract has end day, create it with end day
-            if (contractDto.EndDayIndex > 0)
+            // -1 = active (null EndDayIndex), >= 0 = terminated on that day
+            if (contractDto.EndDayIndex >= 0)
             {
                 contract = contract.WithEndDayIndex(contractDto.EndDayIndex);
             }

@@ -251,7 +251,11 @@ public sealed record EmploymentContractSnapshotDto
     /// <summary>The simulation day the contract started.</summary>
     public required long StartDayIndex { get; init; }
 
-    /// <summary>The simulation day the contract ended (0 if still active).</summary>
+    /// <summary>The simulation day the contract ended, or -1 if still active.</summary>
+    /// <remarks>
+    /// Uses -1 as sentinel for active contracts since nullable long would require
+    /// special JSON handling. Active = -1, Terminated = actual day index (>= 0).
+    /// </remarks>
     public required long EndDayIndex { get; init; }
 
     /// <summary>The pay amount per period (minor units).</summary>

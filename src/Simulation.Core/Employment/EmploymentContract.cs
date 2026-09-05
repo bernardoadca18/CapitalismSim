@@ -9,12 +9,17 @@ namespace CapitalismSim.Simulation.Core.Employment;
 /// An employment contract links a Person to a JobPosition at a Company.
 /// It tracks:
 /// - When the employment started (StartDayIndex)
-/// - When it ended, if terminated (EndDayIndex, 0 if still active)
-/// - Pay information (copied from the position at hire time)
+/// - When it ended, if terminated (EndDayIndex, null if still active)
+/// - Compensation terms (copied from the position at hire time)
 ///
-/// The pay information is copied at hire time so that position changes
+/// The compensation is copied at hire time so that position changes
 /// don't affect existing contracts. This allows companies to adjust
 /// pay for new hires without retroactively changing existing employees.
+///
+/// EndDayIndex semantics:
+/// - null = contract is active
+/// - value = contract terminated on that day
+/// This avoids the ambiguity of "0 could mean active or terminated on day 0".
 /// </remarks>
 public readonly struct EmploymentContract : IEquatable<EmploymentContract>
 {
@@ -29,21 +34,27 @@ public readonly struct EmploymentContract : IEquatable<EmploymentContract>
     public long StartDayIndex { get; }
 
     /// <summary>
-    /// The simulation day the contract ended (0 if still active).
+    /// The simulation day the contract ended, or null if still active.
     /// </summary>
-    public long EndDayIndex { get; }
+    public long? EndDayIndex { get; }
+
+    /// <summary>
+    /// The compensation terms (pay and interval).
+    /// Copied from the job position at hire time.
+    /// </summary>
+    public CompensationTerms Compensation { get; }
 
     /// <summary>
     /// The pay amount per period in minor units (e.g., cents).
     /// Copied from the job position at hire time.
     /// </summary>
-    public long PayAmountMinorUnits { get; }
+    public long PayAmountMinorUnits => Compensation.PayAmountMinorUnits;
 
     /// <summary>
     /// The pay interval in simulation days.
     /// Copied from the job position at hire time.
     /// </summary>
-    public int PayIntervalDays { get; }
+    public int PayIntervalDays => Compensation.PayIntervalDays;
 
     /// <summary>
     /// Creates a new employment contract.
@@ -54,22 +65,16 @@ public readonly struct EmploymentContract : IEquatable<EmploymentContract>
         CompanyId companyId,
         JobPositionId jobPositionId,
         long startDayIndex,
-        long payAmountMinorUnits,
-        int payIntervalDays)
+        CompensationTerms compensation)
     {
         if (startDayIndex < 0)
         {
             throw new ArgumentOutOfRangeException(nameof(startDayIndex), "Start day index cannot be negative.");
         }
 
-        if (payAmountMinorUnits < 0)
+        if (compensation.IsNone)
         {
-            throw new ArgumentOutOfRangeException(nameof(payAmountMinorUnits), "Pay amount cannot be negative.");
-        }
-
-        if (payIntervalDays <= 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(payIntervalDays), "Pay interval must be positive.");
+            throw new ArgumentException("Compensation terms cannot be None.", nameof(compensation));
         }
 
         Id = id;
@@ -77,20 +82,37 @@ public readonly struct EmploymentContract : IEquatable<EmploymentContract>
         CompanyId = companyId;
         JobPositionId = jobPositionId;
         StartDayIndex = startDayIndex;
-        EndDayIndex = 0; // Active by default
-        PayAmountMinorUnits = payAmountMinorUnits;
-        PayIntervalDays = payIntervalDays;
+        EndDayIndex = null; // Active by default
+        Compensation = compensation;
+    }
+
+    /// <summary>
+    /// Creates a new employment contract with explicit pay fields.
+    /// Convenience overload for backward compatibility.
+    /// </summary>
+    public EmploymentContract(
+        EmploymentContractId id,
+        PersonId personId,
+        CompanyId companyId,
+        JobPositionId jobPositionId,
+        long startDayIndex,
+        long payAmountMinorUnits,
+        int payIntervalDays)
+        : this(id, personId, companyId, jobPositionId, startDayIndex,
+            new CompensationTerms(payAmountMinorUnits, payIntervalDays))
+    {
     }
 
     public bool IsNone => Id.IsNone;
 
     public static EmploymentContract None => new(
-        EmploymentContractId.None, PersonId.None, CompanyId.None, JobPositionId.None, 0, 0, 1);
+        EmploymentContractId.None, PersonId.None, CompanyId.None, JobPositionId.None, 0,
+        CompensationTerms.None);
 
     /// <summary>
     /// Whether this contract is currently active (not terminated).
     /// </summary>
-    public bool IsActive => EndDayIndex == 0;
+    public bool IsActive => EndDayIndex is null;
 
     /// <summary>
     /// Returns a new contract with the specified end day.
@@ -103,12 +125,11 @@ public readonly struct EmploymentContract : IEquatable<EmploymentContract>
         }
 
         return new EmploymentContract(
-            Id, PersonId, CompanyId, JobPositionId, StartDayIndex, endDayIndex,
-            PayAmountMinorUnits, PayIntervalDays);
+            Id, PersonId, CompanyId, JobPositionId, StartDayIndex, endDayIndex, Compensation);
     }
 
     /// <summary>
-    /// Creates a new contract with a private constructor for WithEndDayIndex.
+    /// Private constructor for creating terminated contracts.
     /// </summary>
     private EmploymentContract(
         EmploymentContractId id,
@@ -116,9 +137,8 @@ public readonly struct EmploymentContract : IEquatable<EmploymentContract>
         CompanyId companyId,
         JobPositionId jobPositionId,
         long startDayIndex,
-        long endDayIndex,
-        long payAmountMinorUnits,
-        int payIntervalDays)
+        long? endDayIndex,
+        CompensationTerms compensation)
     {
         Id = id;
         PersonId = personId;
@@ -126,8 +146,7 @@ public readonly struct EmploymentContract : IEquatable<EmploymentContract>
         JobPositionId = jobPositionId;
         StartDayIndex = startDayIndex;
         EndDayIndex = endDayIndex;
-        PayAmountMinorUnits = payAmountMinorUnits;
-        PayIntervalDays = payIntervalDays;
+        Compensation = compensation;
     }
 
     public bool Equals(EmploymentContract other) =>
@@ -137,13 +156,12 @@ public readonly struct EmploymentContract : IEquatable<EmploymentContract>
         JobPositionId.Equals(other.JobPositionId) &&
         StartDayIndex == other.StartDayIndex &&
         EndDayIndex == other.EndDayIndex &&
-        PayAmountMinorUnits == other.PayAmountMinorUnits &&
-        PayIntervalDays == other.PayIntervalDays;
+        Compensation.Equals(other.Compensation);
 
     public override bool Equals(object? obj) => obj is EmploymentContract other && Equals(other);
 
     public override int GetHashCode() => HashCode.Combine(
-        Id, PersonId, CompanyId, JobPositionId, StartDayIndex, EndDayIndex, PayAmountMinorUnits, PayIntervalDays);
+        Id, PersonId, CompanyId, JobPositionId, StartDayIndex, EndDayIndex, Compensation);
 
     public static bool operator ==(EmploymentContract left, EmploymentContract right) => left.Equals(right);
 

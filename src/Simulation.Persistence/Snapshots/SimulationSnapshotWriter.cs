@@ -233,7 +233,7 @@ public static class SimulationSnapshotWriter
                     CompanyId = contract.CompanyId.EntityId.Value,
                     JobPositionId = contract.JobPositionId.EntityId.Value,
                     StartDayIndex = contract.StartDayIndex,
-                    EndDayIndex = contract.EndDayIndex,
+                    EndDayIndex = contract.EndDayIndex ?? -1, // -1 = active
                     PayAmountMinorUnits = contract.PayAmountMinorUnits,
                     PayIntervalDays = contract.PayIntervalDays,
                 };

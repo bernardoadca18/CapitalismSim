@@ -15,6 +15,7 @@ namespace CapitalismSim.Simulation.Core.Employment;
 ///   but at most one active contract per company
 /// - An active contract references a valid person, company, and job position
 /// - Each contract has a corresponding payroll state
+/// - A job position can have at most one active contract at a time
 ///
 /// Wage Arrears:
 /// - When a company cannot pay wages, they accrue as unpaid wages
@@ -25,6 +26,9 @@ public sealed class EmploymentState
 {
     private readonly Dictionary<EmploymentContractId, EmploymentContract> _contracts = new();
     private readonly Dictionary<EmploymentContractId, PayrollState> _payrollStates = new();
+
+    // Index for position occupancy: JobPositionId -> EmploymentContractId (active only)
+    private readonly Dictionary<JobPositionId, EmploymentContractId> _positionOccupancy = new();
 
     /// <summary>Number of employment contracts.</summary>
     public int ContractCount => _contracts.Count;
@@ -89,8 +93,21 @@ public sealed class EmploymentState
                 $"Cannot create contract {contract.Id}: position {contract.JobPositionId} belongs to company {position.CompanyId}, not {contract.CompanyId}.");
         }
 
+        // Enforce one active contract per position
+        if (_positionOccupancy.TryGetValue(contract.JobPositionId, out var existingContractId))
+        {
+            throw new InvalidOperationException(
+                $"Cannot create contract {contract.Id}: position {contract.JobPositionId} is already occupied by active contract {existingContractId}.");
+        }
+
         // Create contract
         _contracts[contract.Id] = contract;
+
+        // Track position occupancy for active contracts
+        if (contract.IsActive)
+        {
+            _positionOccupancy[contract.JobPositionId] = contract.Id;
+        }
 
         // Initialize payroll state with first pay day = start day + pay interval
         var payrollState = new PayrollState(contract.Id, contract.StartDayIndex + contract.PayIntervalDays);
@@ -134,7 +151,11 @@ public sealed class EmploymentState
             throw new InvalidOperationException($"Contract {contractId} is already terminated.");
         }
 
-        _contracts[contractId] = contract.WithEndDayIndex(endDayIndex);
+        var terminatedContract = contract.WithEndDayIndex(endDayIndex);
+        _contracts[contractId] = terminatedContract;
+
+        // Release position occupancy
+        _positionOccupancy.Remove(contract.JobPositionId);
     }
 
     /// <summary>
@@ -249,6 +270,12 @@ public sealed class EmploymentState
             clone._payrollStates[contractId] = payroll.Clone();
         }
 
+        // Clone position occupancy index
+        foreach (var (positionId, contractId) in _positionOccupancy)
+        {
+            clone._positionOccupancy[positionId] = contractId;
+        }
+
         return clone;
     }
 
@@ -264,6 +291,12 @@ public sealed class EmploymentState
         if (!_payrollStates.ContainsKey(contract.Id))
         {
             _payrollStates[contract.Id] = new PayrollState(contract.Id, contract.StartDayIndex + contract.PayIntervalDays);
+        }
+
+        // Track position occupancy for active contracts
+        if (contract.IsActive)
+        {
+            _positionOccupancy[contract.JobPositionId] = contract.Id;
         }
     }
 }

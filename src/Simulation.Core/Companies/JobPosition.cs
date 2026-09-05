@@ -1,5 +1,6 @@
 using CapitalismSim.Simulation.Core.Entities;
 using CapitalismSim.Simulation.Core.Economics;
+using CapitalismSim.Simulation.Core.Employment;
 
 namespace CapitalismSim.Simulation.Core.Companies;
 
@@ -44,9 +45,9 @@ public readonly record struct JobRoleCode
 /// - A unique JobPositionId
 /// - A CompanyId for the owning company
 /// - A JobRoleCode categorizing the role
-/// - Pay information (amount and interval)
+/// - Compensation terms (pay and interval)
 ///
-/// A position can be filled by at most one employee at a time.
+/// A position can be filled by at most one active contract at a time.
 /// When filled, an EmploymentContract links the person to this position.
 /// </remarks>
 public readonly struct JobPosition : IEquatable<JobPosition>
@@ -56,14 +57,19 @@ public readonly struct JobPosition : IEquatable<JobPosition>
     public JobRoleCode Role { get; }
 
     /// <summary>
+    /// The compensation terms for this position.
+    /// </summary>
+    public CompensationTerms Compensation { get; }
+
+    /// <summary>
     /// The pay amount per period in minor units (e.g., cents).
     /// </summary>
-    public long PayAmountMinorUnits { get; }
+    public long PayAmountMinorUnits => Compensation.PayAmountMinorUnits;
 
     /// <summary>
     /// The pay interval in simulation days.
     /// </summary>
-    public int PayIntervalDays { get; }
+    public int PayIntervalDays => Compensation.PayIntervalDays;
 
     /// <summary>
     /// Creates a new job position.
@@ -71,51 +77,58 @@ public readonly struct JobPosition : IEquatable<JobPosition>
     /// <param name="id">Unique position identifier.</param>
     /// <param name="companyId">The company that owns this position.</param>
     /// <param name="role">The job role for this position.</param>
-    /// <param name="payAmountMinorUnits">Pay amount per period in minor units.</param>
-    /// <param name="payIntervalDays">Pay interval in days (e.g., 7 for weekly, 14 for bi-weekly, 30 for monthly).</param>
+    /// <param name="compensation">The compensation terms.</param>
+    public JobPosition(
+        JobPositionId id,
+        CompanyId companyId,
+        JobRoleCode role,
+        CompensationTerms compensation)
+    {
+        if (compensation.IsNone)
+        {
+            throw new ArgumentException("Compensation terms cannot be None.", nameof(compensation));
+        }
+
+        // Note: CompensationTerms validates its own invariants
+
+        Id = id;
+        CompanyId = companyId;
+        Role = role;
+        Compensation = compensation;
+    }
+
+    /// <summary>
+    /// Creates a new job position with explicit pay fields.
+    /// Convenience overload for backward compatibility.
+    /// </summary>
     public JobPosition(
         JobPositionId id,
         CompanyId companyId,
         JobRoleCode role,
         long payAmountMinorUnits,
         int payIntervalDays)
+        : this(id, companyId, role, new CompensationTerms(payAmountMinorUnits, payIntervalDays))
     {
-        if (payAmountMinorUnits < 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(payAmountMinorUnits), "Pay amount cannot be negative.");
-        }
-
-        if (payIntervalDays <= 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(payIntervalDays), "Pay interval must be positive.");
-        }
-
-        Id = id;
-        CompanyId = companyId;
-        Role = role;
-        PayAmountMinorUnits = payAmountMinorUnits;
-        PayIntervalDays = payIntervalDays;
     }
 
     public bool IsNone => Id.IsNone;
 
-    public static JobPosition None => new(JobPositionId.None, CompanyId.None, JobRoleCode.GeneralWorker, 0, 1);
+    public static JobPosition None => new(JobPositionId.None, CompanyId.None, JobRoleCode.GeneralWorker, CompensationTerms.Zero(1));
 
     /// <summary>
     /// Gets the pay as a Money struct for the given currency.
     /// </summary>
-    public Money GetPayAmount(CurrencyCode currency) => new(PayAmountMinorUnits, currency);
+    public Money GetPayAmount(CurrencyCode currency) => Compensation.GetPayAmount(currency);
 
     public bool Equals(JobPosition other) =>
         Id.Equals(other.Id) &&
         CompanyId.Equals(other.CompanyId) &&
         Role.Equals(other.Role) &&
-        PayAmountMinorUnits == other.PayAmountMinorUnits &&
-        PayIntervalDays == other.PayIntervalDays;
+        Compensation.Equals(other.Compensation);
 
     public override bool Equals(object? obj) => obj is JobPosition other && Equals(other);
 
-    public override int GetHashCode() => HashCode.Combine(Id, CompanyId, Role, PayAmountMinorUnits, PayIntervalDays);
+    public override int GetHashCode() => HashCode.Combine(Id, CompanyId, Role, Compensation);
 
     public static bool operator ==(JobPosition left, JobPosition right) => left.Equals(right);
 

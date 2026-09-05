@@ -24,6 +24,11 @@ try
         return RunPhase2(options);
     }
 
+    if (options.Phase3)
+    {
+        return RunPhase3(options);
+    }
+
     return RunSingle(options);
 }
 catch (ArgumentException ex)
@@ -140,6 +145,48 @@ static int RunPhase2(HeadlessOptions options)
     Console.WriteLine($"  Fully satisfied: {summary.FullySatisfiedHouseholds}");
     Console.WriteLine($"  Total money supply: {summary.TotalMoneySupply}");
     Console.WriteLine($"  Avg household balance: {summary.AverageHouseholdBalance}");
+    Console.WriteLine($"  Supply accounting valid: {summary.SupplyAccountingValid}");
+
+    Console.WriteLine();
+    Console.WriteLine("Result: PASS");
+    return 0;
+}
+
+static int RunPhase3(HeadlessOptions options)
+{
+    Console.WriteLine("=== Phase 3 Scenario ===");
+    Console.WriteLine($"Seed: {options.Seed}");
+    Console.WriteLine($"Duration: {options.DurationDays} days");
+
+    var scenario = Phase3Scenario.Create(options.Seed);
+    var summary = scenario.GetSummary();
+
+    Console.WriteLine();
+    Console.WriteLine("Initial state:");
+    Console.WriteLine($"  Households: {summary.TotalHouseholds}");
+    Console.WriteLine($"  Persons: {summary.TotalPersons}");
+    Console.WriteLine($"  Companies: {summary.TotalCompanies}");
+    Console.WriteLine($"  Job positions: {summary.TotalJobPositions}");
+    Console.WriteLine($"  Employment contracts: {summary.TotalContracts}");
+    Console.WriteLine($"  Active contracts: {summary.ActiveContracts}");
+    Console.WriteLine($"  Household money supply: {summary.TotalHouseholdMoneySupply}");
+    Console.WriteLine($"  Company treasury: {summary.TotalCompanyTreasury}");
+    Console.WriteLine($"  Supply accounting valid: {summary.SupplyAccountingValid}");
+
+    var sw = Stopwatch.StartNew();
+    scenario.AdvanceByDays(options.DurationDays);
+    sw.Stop();
+
+    summary = scenario.GetSummary();
+
+    Console.WriteLine();
+    Console.WriteLine($"Final state (after {sw.ElapsedMilliseconds}ms):");
+    Console.WriteLine($"  Total contracts: {summary.TotalContracts}");
+    Console.WriteLine($"  Active contracts: {summary.ActiveContracts}");
+    Console.WriteLine($"  Household money supply: {summary.TotalHouseholdMoneySupply}");
+    Console.WriteLine($"  Company treasury: {summary.TotalCompanyTreasury}");
+    Console.WriteLine($"  Unpaid wages: {summary.TotalUnpaidWages}");
+    Console.WriteLine($"  Contracts in arrears: {summary.ContractsInArrears}");
     Console.WriteLine($"  Supply accounting valid: {summary.SupplyAccountingValid}");
 
     Console.WriteLine();

@@ -20,6 +20,7 @@ public readonly record struct MoneyFlowReason
 
     public static MoneyFlowReason InitialEndowment => new("initial-endowment");
     public static MoneyFlowReason BasicNeeds => new("basic-needs");
+    public static MoneyFlowReason Wages => new("wages");
     public static MoneyFlowReason TestFixture => new("test-fixture");
 
     public static MoneyFlowReason FromString(string value)
