@@ -11,8 +11,11 @@ namespace CapitalismSim.Simulation.Core.Companies;
 /// Job roles are string identifiers that categorize positions.
 /// Future phases may add skill requirements, salary bands, etc.
 /// </remarks>
-public readonly record struct JobRoleCode
+public readonly record struct JobRoleCode : IEquatable<JobRoleCode>
 {
+    /// <summary>Maximum allowed length for a job role code.</summary>
+    public const int MaxLength = 64;
+
     public string Value { get; }
 
     private JobRoleCode(string value)
@@ -30,8 +33,18 @@ public readonly record struct JobRoleCode
         {
             throw new ArgumentException("Job role code cannot be null or whitespace.", nameof(value));
         }
+        if (value.Length > MaxLength)
+        {
+            throw new ArgumentException($"Job role code cannot exceed {MaxLength} characters.", nameof(value));
+        }
         return new JobRoleCode(value);
     }
+
+    public bool Equals(JobRoleCode other) =>
+        string.Equals(Value, other.Value, StringComparison.Ordinal);
+
+    public override int GetHashCode() =>
+        Value is not null ? StringComparer.Ordinal.GetHashCode(Value) : 0;
 
     public override string ToString() => Value;
 }
@@ -74,22 +87,35 @@ public readonly struct JobPosition : IEquatable<JobPosition>
     /// <summary>
     /// Creates a new job position.
     /// </summary>
-    /// <param name="id">Unique position identifier.</param>
-    /// <param name="companyId">The company that owns this position.</param>
+    /// <param name="id">Unique position identifier (must not be None).</param>
+    /// <param name="companyId">The company that owns this position (must not be None).</param>
     /// <param name="role">The job role for this position.</param>
-    /// <param name="compensation">The compensation terms (must not be Unspecified).</param>
+    /// <param name="compensation">The compensation terms (must be valid for position).</param>
     public JobPosition(
         JobPositionId id,
         CompanyId companyId,
         JobRoleCode role,
         CompensationTerms compensation)
     {
-        if (compensation.IsUnspecified)
+        if (id.IsNone)
         {
-            throw new ArgumentException("Compensation terms cannot be Unspecified.", nameof(compensation));
+            throw new ArgumentException("JobPosition ID cannot be None.", nameof(id));
         }
 
-        // Note: CompensationTerms validates its own invariants
+        if (companyId.IsNone)
+        {
+            throw new ArgumentException("Company ID cannot be None.", nameof(companyId));
+        }
+
+        if (string.IsNullOrWhiteSpace(role.Value))
+        {
+            throw new ArgumentException("Job role cannot be empty.", nameof(role));
+        }
+
+        if (!compensation.IsValidForPosition)
+        {
+            throw new ArgumentException("Compensation terms must be valid for a position.", nameof(compensation));
+        }
 
         Id = id;
         CompanyId = companyId;

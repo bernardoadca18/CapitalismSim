@@ -38,6 +38,16 @@ public sealed class DeterministicFingerprintBuilder
         return this;
     }
 
+    public DeterministicFingerprintBuilder Add(int value)
+    {
+        return Add((long)value);
+    }
+
+    public DeterministicFingerprintBuilder Add(bool value)
+    {
+        return Add(value ? 1L : 0L);
+    }
+
     /// <summary>Finalizes and returns the fingerprint as a 16-digit hex string.</summary>
     public string Build() => _hash.ToString("x16", System.Globalization.CultureInfo.InvariantCulture);
 }

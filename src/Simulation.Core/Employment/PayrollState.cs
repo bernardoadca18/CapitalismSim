@@ -51,6 +51,16 @@ public sealed class PayrollState
     /// <param name="nextPayDayIndex">The first pay day for this contract.</param>
     public PayrollState(EmploymentContractId contractId, long nextPayDayIndex)
     {
+        if (contractId.IsNone)
+        {
+            throw new ArgumentException("Contract ID cannot be None.", nameof(contractId));
+        }
+
+        if (nextPayDayIndex < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(nextPayDayIndex), "Next pay day index cannot be negative.");
+        }
+
         ContractId = contractId;
         NextPayDayIndex = nextPayDayIndex;
         AccruedUnpaidWagesMinorUnits = 0;
@@ -90,7 +100,10 @@ public sealed class PayrollState
     /// </summary>
     public void RecordMissedPayPeriod()
     {
-        ConsecutiveMissedPayPeriods++;
+        checked
+        {
+            ConsecutiveMissedPayPeriods++;
+        }
     }
 
     /// <summary>
@@ -111,7 +124,10 @@ public sealed class PayrollState
             throw new ArgumentOutOfRangeException(nameof(intervalDays), "Interval must be positive.");
         }
 
-        NextPayDayIndex += intervalDays;
+        checked
+        {
+            NextPayDayIndex += intervalDays;
+        }
     }
 
     /// <summary>
@@ -119,11 +135,9 @@ public sealed class PayrollState
     /// </summary>
     public PayrollState Clone()
     {
-        return new PayrollState(ContractId, NextPayDayIndex)
-        {
-            AccruedUnpaidWagesMinorUnits = AccruedUnpaidWagesMinorUnits,
-            ConsecutiveMissedPayPeriods = ConsecutiveMissedPayPeriods,
-        };
+        var clone = new PayrollState(ContractId, NextPayDayIndex);
+        clone.Restore(AccruedUnpaidWagesMinorUnits, ConsecutiveMissedPayPeriods, NextPayDayIndex);
+        return clone;
     }
 
     /// <summary>

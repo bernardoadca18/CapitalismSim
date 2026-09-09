@@ -17,6 +17,9 @@ namespace CapitalismSim.Simulation.Core.Companies;
 /// </remarks>
 public sealed class Company
 {
+    /// <summary>Maximum allowed length for a company name.</summary>
+    public const int MaxNameLength = 128;
+
     public CompanyId Id { get; }
     public string Name { get; }
     public AccountId TreasuryAccountId { get; }
@@ -34,14 +37,29 @@ public sealed class Company
     /// <summary>
     /// Creates a new company.
     /// </summary>
-    /// <param name="id">Unique company identifier.</param>
-    /// <param name="name">Company name.</param>
-    /// <param name="treasuryAccountId">The company's treasury account for managing finances.</param>
+    /// <param name="id">Unique company identifier (must not be None).</param>
+    /// <param name="name">Company name (non-empty, max 128 characters).</param>
+    /// <param name="treasuryAccountId">The company's treasury account (must not be None).</param>
     public Company(CompanyId id, string name, AccountId treasuryAccountId)
     {
+        if (id.IsNone)
+        {
+            throw new ArgumentException("Company ID cannot be None.", nameof(id));
+        }
+
+        if (treasuryAccountId.IsNone)
+        {
+            throw new ArgumentException("Treasury account ID cannot be None.", nameof(treasuryAccountId));
+        }
+
         if (string.IsNullOrWhiteSpace(name))
         {
             throw new ArgumentException("Company name cannot be null or whitespace.", nameof(name));
+        }
+
+        if (name.Length > MaxNameLength)
+        {
+            throw new ArgumentException($"Company name cannot exceed {MaxNameLength} characters.", nameof(name));
         }
 
         Id = id;

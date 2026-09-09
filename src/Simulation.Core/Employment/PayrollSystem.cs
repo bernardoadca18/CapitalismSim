@@ -57,16 +57,18 @@ public sealed class PayrollSystem : ISimulationSystem
         var companies = state.Companies;
         var population = state.Population;
         var ledger = state.MoneyLedger;
-        // Convert seconds to days (86400 seconds per day)
         var currentDayIndex = context.ScheduledInstant.TotalSeconds / 86400L;
 
-        // Process each contract that might need payment today
-        foreach (var contractId in employment.GetAllContractIds())
+        // Process contracts in explicit ascending EmploymentContractId order for deterministic resolution
+        // when treasury balance is insufficient to pay all employees.
+        var contractIds = employment.GetAllContractIds()
+            .OrderBy(id => id.EntityId.Value)
+            .ToList();
+
+        foreach (var contractId in contractIds)
         {
             var contract = employment.GetContract(contractId);
-
-            // Skip inactive contracts
-            if (!contract.IsActive)
+            if (contract.IsNone)
             {
                 continue;
             }
@@ -77,78 +79,98 @@ public sealed class PayrollSystem : ISimulationSystem
                 continue;
             }
 
-            // Check if today is a pay day for this contract
-            if (payroll.NextPayDayIndex != currentDayIndex)
+            if (contract.IsActive)
             {
-                continue;
+                if (payroll.NextPayDayIndex == currentDayIndex)
+                {
+                    ProcessActivePayroll(contract, payroll, companies, population, ledger);
+                }
             }
-
-            // Process payroll for this contract
-            ProcessPayrollForContract(contract, payroll, companies, population, ledger);
+            else
+            {
+                // Terminated contract: attempt arrears-only repayment if arrears exist
+                if (payroll.AccruedUnpaidWagesMinorUnits > 0)
+                {
+                    ProcessArrearsRepaymentForTerminatedContract(contract, payroll, companies, population, ledger);
+                }
+            }
         }
     }
 
-    private static void ProcessPayrollForContract(
+    private static void ProcessActivePayroll(
         EmploymentContract contract,
         PayrollState payroll,
         CompaniesState companies,
         PopulationState population,
         MoneyLedger ledger)
     {
+        // Fail-fast invariant validations: structural corruptions are not treated as insolvency
         var company = companies.GetCompany(contract.CompanyId);
         if (company is null)
         {
-            // Company doesn't exist - record missed payment
-            payroll.AccrueUnpaidWages(contract.PayAmountMinorUnits);
-            payroll.RecordMissedPayPeriod();
-            payroll.AdvanceNextPayDay(contract.PayIntervalDays);
-            return;
+            throw new InvalidOperationException(
+                $"Payroll invariant violation: Company {contract.CompanyId} for contract {contract.Id} does not exist.");
         }
 
-        // Get the employee's personal account
         var person = population.GetPerson(contract.PersonId);
         if (person.IsNone)
         {
-            // Person doesn't exist - record missed payment
-            payroll.AccrueUnpaidWages(contract.PayAmountMinorUnits);
-            payroll.RecordMissedPayPeriod();
-            payroll.AdvanceNextPayDay(contract.PayIntervalDays);
-            return;
+            throw new InvalidOperationException(
+                $"Payroll invariant violation: Person {contract.PersonId} for contract {contract.Id} does not exist.");
         }
 
         var treasuryAccountId = company.TreasuryAccountId;
-        var employeeAccountId = person.PersonalAccountId;
-        var treasuryBalance = ledger.GetBalance(treasuryAccountId);
-        var wageAmount = new Money(contract.PayAmountMinorUnits, treasuryBalance.Currency);
+        if (treasuryAccountId.IsNone || !ledger.AccountExists(treasuryAccountId))
+        {
+            throw new InvalidOperationException(
+                $"Payroll invariant violation: Company {company.Id} treasury account {treasuryAccountId} does not exist.");
+        }
 
-        // Calculate total owed: current wage + any accrued unpaid wages
+        if (ledger.GetOwner(treasuryAccountId) != company.Id.EntityId)
+        {
+            throw new InvalidOperationException(
+                $"Payroll invariant violation: Company treasury account {treasuryAccountId} is not owned by company {company.Id}.");
+        }
+
+        var employeeAccountId = person.PersonalAccountId;
+        if (employeeAccountId.IsNone || !ledger.AccountExists(employeeAccountId))
+        {
+            throw new InvalidOperationException(
+                $"Payroll invariant violation: Employee {person.Id} personal account {employeeAccountId} does not exist.");
+        }
+
+        if (ledger.GetOwner(employeeAccountId) != person.Id.EntityId)
+        {
+            throw new InvalidOperationException(
+                $"Payroll invariant violation: Employee personal account {employeeAccountId} is not owned by person {person.Id}.");
+        }
+
+        var treasuryBalance = ledger.GetBalance(treasuryAccountId);
+
+        // Calculate total owed: current wage + accrued arrears
         long totalOwedMinorUnits = checked(contract.PayAmountMinorUnits + payroll.AccruedUnpaidWagesMinorUnits);
         var totalOwed = new Money(totalOwedMinorUnits, treasuryBalance.Currency);
 
-        // Determine how much can be paid
         Money amountToPay = treasuryBalance < totalOwed ? treasuryBalance : totalOwed;
 
         if (amountToPay.IsZero)
         {
-            // Cannot pay anything
+            // Legitimate insolvency: accrue unpaid wages and record missed pay period
             payroll.AccrueUnpaidWages(contract.PayAmountMinorUnits);
             payroll.RecordMissedPayPeriod();
         }
         else
         {
-            // Pay what we can
-            // First, pay down accrued wages, then current wages
+            // Pay down accrued wages first, then current wages
             long paidFromAccrued = payroll.PayAccruedWages(amountToPay.MinorUnits);
-            long remainingToPay = amountToPay.MinorUnits - paidFromAccrued;
+            long remainingToPay = checked(amountToPay.MinorUnits - paidFromAccrued);
 
-            // If there's remaining payment, it goes toward current wages
             if (remainingToPay > 0)
             {
-                // Current wage was partially or fully paid
                 if (remainingToPay < contract.PayAmountMinorUnits)
                 {
-                    // Partial payment - accrue the unpaid portion
-                    payroll.AccrueUnpaidWages(contract.PayAmountMinorUnits - remainingToPay);
+                    // Partial payment of current wage
+                    payroll.AccrueUnpaidWages(checked(contract.PayAmountMinorUnits - remainingToPay));
                     payroll.RecordMissedPayPeriod();
                 }
                 else
@@ -159,25 +181,80 @@ public sealed class PayrollSystem : ISimulationSystem
             }
             else
             {
-                // Payment only went toward accrued wages, not current
+                // Payment only went toward accrued wages
                 payroll.AccrueUnpaidWages(contract.PayAmountMinorUnits);
                 payroll.RecordMissedPayPeriod();
             }
 
-            // Transfer money from company treasury to employee's personal account
-            if (employeeAccountId.IsNone)
-            {
-                // Employee account doesn't exist - this shouldn't happen in valid state
-                // Still record the transfer as external (money leaves company but goes nowhere)
-                ledger.ExternalDebit(treasuryAccountId, amountToPay, MoneyFlowReason.Wages);
-            }
-            else
-            {
-                ledger.Transfer(treasuryAccountId, employeeAccountId, amountToPay);
-            }
+            // Always transfer between accounts; never external debit/credit
+            ledger.Transfer(treasuryAccountId, employeeAccountId, amountToPay);
         }
 
-        // Advance to next pay day
+        // Advance next pay day for active contract
         payroll.AdvanceNextPayDay(contract.PayIntervalDays);
+    }
+
+    private static void ProcessArrearsRepaymentForTerminatedContract(
+        EmploymentContract contract,
+        PayrollState payroll,
+        CompaniesState companies,
+        PopulationState population,
+        MoneyLedger ledger)
+    {
+        var company = companies.GetCompany(contract.CompanyId);
+        if (company is null)
+        {
+            throw new InvalidOperationException(
+                $"Payroll invariant violation: Company {contract.CompanyId} for terminated contract {contract.Id} does not exist.");
+        }
+
+        var person = population.GetPerson(contract.PersonId);
+        if (person.IsNone)
+        {
+            throw new InvalidOperationException(
+                $"Payroll invariant violation: Person {contract.PersonId} for terminated contract {contract.Id} does not exist.");
+        }
+
+        var treasuryAccountId = company.TreasuryAccountId;
+        if (treasuryAccountId.IsNone || !ledger.AccountExists(treasuryAccountId))
+        {
+            throw new InvalidOperationException(
+                $"Payroll invariant violation: Company {company.Id} treasury account {treasuryAccountId} does not exist.");
+        }
+
+        if (ledger.GetOwner(treasuryAccountId) != company.Id.EntityId)
+        {
+            throw new InvalidOperationException(
+                $"Payroll invariant violation: Company treasury account {treasuryAccountId} is not owned by company {company.Id}.");
+        }
+
+        var employeeAccountId = person.PersonalAccountId;
+        if (employeeAccountId.IsNone || !ledger.AccountExists(employeeAccountId))
+        {
+            throw new InvalidOperationException(
+                $"Payroll invariant violation: Employee {person.Id} personal account {employeeAccountId} does not exist.");
+        }
+
+        if (ledger.GetOwner(employeeAccountId) != person.Id.EntityId)
+        {
+            throw new InvalidOperationException(
+                $"Payroll invariant violation: Employee personal account {employeeAccountId} is not owned by person {person.Id}.");
+        }
+
+        var treasuryBalance = ledger.GetBalance(treasuryAccountId);
+        if (treasuryBalance.IsZero)
+        {
+            return;
+        }
+
+        long arrearsOwed = payroll.AccruedUnpaidWagesMinorUnits;
+        var owed = new Money(arrearsOwed, treasuryBalance.Currency);
+        Money amountToPay = treasuryBalance < owed ? treasuryBalance : owed;
+
+        if (!amountToPay.IsZero)
+        {
+            payroll.PayAccruedWages(amountToPay.MinorUnits);
+            ledger.Transfer(treasuryAccountId, employeeAccountId, amountToPay);
+        }
     }
 }

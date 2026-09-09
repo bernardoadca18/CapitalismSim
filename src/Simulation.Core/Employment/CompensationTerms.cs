@@ -29,21 +29,32 @@ public readonly record struct CompensationTerms
     /// <summary>The currency for the pay amount.</summary>
     public CurrencyCode Currency { get; }
 
+    /// <summary>Gets the pay amount as a Money value.</summary>
+    public Money PayAmount => new(PayAmountMinorUnits, Currency);
+
+    /// <summary>
+    /// Creates new compensation terms with explicit Money value and pay interval.
+    /// </summary>
+    public CompensationTerms(Money payAmount, int payIntervalDays)
+        : this(payAmount.MinorUnits, payIntervalDays, payAmount.Currency)
+    {
+    }
+
     /// <summary>
     /// Creates new compensation terms.
     /// </summary>
-    /// <param name="payAmountMinorUnits">Pay amount per period in minor units (must be >= 0).</param>
+    /// <param name="payAmountMinorUnits">Pay amount per period in minor units (must be > 0 for real positions).</param>
     /// <param name="payIntervalDays">Pay interval in days (must be > 0, e.g., 7 weekly, 30 monthly).</param>
     /// <param name="currency">The currency for the pay amount (must not be None).</param>
     /// <exception cref="ArgumentOutOfRangeException">
-    /// Pay amount is negative, pay interval is not positive, or currency is None.
+    /// Pay amount is zero or negative, pay interval is not positive, or currency is None.
     /// </exception>
     public CompensationTerms(long payAmountMinorUnits, int payIntervalDays, CurrencyCode currency)
     {
-        if (payAmountMinorUnits < 0)
+        if (payAmountMinorUnits <= 0)
         {
             throw new ArgumentOutOfRangeException(nameof(payAmountMinorUnits),
-                "Pay amount cannot be negative.");
+                "Pay amount must be positive (> 0). Zero-pay positions are not supported in Phase 3.");
         }
 
         if (payIntervalDays <= 0)
@@ -72,19 +83,29 @@ public readonly record struct CompensationTerms
     /// <summary>
     /// Gets the pay amount as a Money struct.
     /// </summary>
-    public Money GetPayAmount() => new(PayAmountMinorUnits, Currency);
+    public Money GetPayAmount() => PayAmount;
 
     /// <summary>
     /// Calculates the daily pay rate.
     /// </summary>
-    public Money GetDailyRate() =>
-        new(PayAmountMinorUnits / PayIntervalDays, Currency);
+    public Money GetDailyRate()
+    {
+        if (IsUnspecified || PayIntervalDays <= 0)
+        {
+            return Money.Zero(Currency);
+        }
+        return new Money(PayAmountMinorUnits / PayIntervalDays, Currency);
+    }
 
     /// <summary>
     /// Validates that this compensation is suitable for a real position.
-    /// Returns false for Unspecified sentinel.
+    /// Returns false for Unspecified sentinel or zero/negative pay.
     /// </summary>
-    public bool IsValidForPosition => !IsUnspecified;
+    public bool IsValidForPosition =>
+        !IsUnspecified &&
+        PayAmountMinorUnits > 0 &&
+        PayIntervalDays > 0 &&
+        Currency != CurrencyCode.None;
 
     public override string ToString()
     {

@@ -488,4 +488,164 @@ public class PayrollSystemTests
         Assert.NotNull(payroll);
         Assert.Equal(0, payroll.ConsecutiveMissedPayPeriods);
     }
+
+    [Fact]
+    public void Tick_DeterministicContractOrdering_WhenTreasuryIsInsufficient()
+    {
+        var engine = new SimulationEngine(new SimulationEngineOptions
+        {
+            WorldSeed = 12345,
+            Currency = CurrencyCode.USD,
+        });
+
+        var companyEntityId = engine.EntityIds.Allocate();
+        var companyId = new CompanyId(companyEntityId);
+        var treasuryAccountId = new AccountId(engine.EntityIds.Allocate());
+        engine.State.MoneyLedger.CreateAccount(treasuryAccountId, companyEntityId);
+        // Only $500 in treasury, but each worker is owed $500
+        engine.State.MoneyLedger.ExternalCredit(treasuryAccountId, new Money(50000, CurrencyCode.USD), MoneyFlowReason.InitialEndowment);
+        var company = new Company(companyId, "Test Company", treasuryAccountId);
+        engine.State.Companies.CreateCompany(company, engine.State.MoneyLedger);
+
+        var comp = new CompensationTerms(50000, 30, CurrencyCode.USD);
+        var pos1 = new JobPositionId(engine.EntityIds.Allocate());
+        var pos2 = new JobPositionId(engine.EntityIds.Allocate());
+        engine.State.Companies.AddPosition(new JobPosition(pos1, companyId, JobRoleCode.GeneralWorker, comp));
+        engine.State.Companies.AddPosition(new JobPosition(pos2, companyId, JobRoleCode.GeneralWorker, comp));
+
+        var hId = new HouseholdId(engine.EntityIds.Allocate());
+        var hAcc = new AccountId(engine.EntityIds.Allocate());
+        engine.State.Population.CreateHousehold(hId, hAcc);
+        engine.State.MoneyLedger.CreateAccount(hAcc, hId.EntityId);
+
+        var p1 = new PersonId(engine.EntityIds.Allocate());
+        var p1Acc = new AccountId(engine.EntityIds.Allocate());
+        engine.State.MoneyLedger.CreateAccount(p1Acc, p1.EntityId);
+        engine.State.Population.AddPerson(Person.WithAge(p1, hId, 30, 0, p1Acc));
+
+        var p2 = new PersonId(engine.EntityIds.Allocate());
+        var p2Acc = new AccountId(engine.EntityIds.Allocate());
+        engine.State.MoneyLedger.CreateAccount(p2Acc, p2.EntityId);
+        engine.State.Population.AddPerson(Person.WithAge(p2, hId, 32, 0, p2Acc));
+
+        var c1 = new EmploymentContractId(engine.EntityIds.Allocate());
+        var c2 = new EmploymentContractId(engine.EntityIds.Allocate());
+        Assert.True(c1.EntityId.Value < c2.EntityId.Value);
+
+        engine.State.Employment.CreateContract(new EmploymentContract(c1, p1, companyId, pos1, 0, comp), engine.State.Population, engine.State.Companies);
+        engine.State.Employment.CreateContract(new EmploymentContract(c2, p2, companyId, pos2, 0, comp), engine.State.Population, engine.State.Companies);
+
+        var system = new PayrollSystem();
+        engine.Scheduler.Register(system, new SchedulingPolicy(SimulationInstant.Epoch, SimulationDuration.FromDays(1)));
+
+        engine.AdvanceBy(SimulationDuration.FromDays(30));
+
+        // First contract receives the $500, second contract gets 0 and accrues arrears
+        Assert.Equal(50000, engine.State.MoneyLedger.GetBalance(p1Acc).MinorUnits);
+        Assert.Equal(0, engine.State.MoneyLedger.GetBalance(p2Acc).MinorUnits);
+        Assert.Equal(0, engine.State.Employment.GetPayrollState(c1)!.AccruedUnpaidWagesMinorUnits);
+        Assert.Equal(50000, engine.State.Employment.GetPayrollState(c2)!.AccruedUnpaidWagesMinorUnits);
+    }
+
+    [Fact]
+    public void Tick_TerminatedContractWithArrears_RepaysArrearsWithoutNewAccrual()
+    {
+        var engine = new SimulationEngine(new SimulationEngineOptions
+        {
+            WorldSeed = 12345,
+            Currency = CurrencyCode.USD,
+        });
+
+        var companyEntityId = engine.EntityIds.Allocate();
+        var companyId = new CompanyId(companyEntityId);
+        var treasuryAccountId = new AccountId(engine.EntityIds.Allocate());
+        engine.State.MoneyLedger.CreateAccount(treasuryAccountId, companyEntityId);
+        var company = new Company(companyId, "Test Company", treasuryAccountId);
+        engine.State.Companies.CreateCompany(company, engine.State.MoneyLedger);
+
+        var comp = new CompensationTerms(50000, 30, CurrencyCode.USD);
+        var pos = new JobPositionId(engine.EntityIds.Allocate());
+        engine.State.Companies.AddPosition(new JobPosition(pos, companyId, JobRoleCode.GeneralWorker, comp));
+
+        var hId = new HouseholdId(engine.EntityIds.Allocate());
+        var hAcc = new AccountId(engine.EntityIds.Allocate());
+        engine.State.Population.CreateHousehold(hId, hAcc);
+        engine.State.MoneyLedger.CreateAccount(hAcc, hId.EntityId);
+
+        var p = new PersonId(engine.EntityIds.Allocate());
+        var pAcc = new AccountId(engine.EntityIds.Allocate());
+        engine.State.MoneyLedger.CreateAccount(pAcc, p.EntityId);
+        engine.State.Population.AddPerson(Person.WithAge(p, hId, 30, 0, pAcc));
+
+        var c = new EmploymentContractId(engine.EntityIds.Allocate());
+        engine.State.Employment.CreateContract(new EmploymentContract(c, p, companyId, pos, 0, comp), engine.State.Population, engine.State.Companies);
+
+        var system = new PayrollSystem();
+        engine.Scheduler.Register(system, new SchedulingPolicy(SimulationInstant.Epoch, SimulationDuration.FromDays(1)));
+
+        // Day 30: Company has 0 funds, worker misses pay and accrues $500
+        engine.AdvanceBy(SimulationDuration.FromDays(30));
+        var payroll = engine.State.Employment.GetPayrollState(c)!;
+        Assert.Equal(50000, payroll.AccruedUnpaidWagesMinorUnits);
+
+        // Day 35: Terminate contract
+        engine.State.Employment.TerminateContract(c, 35);
+        Assert.False(engine.State.Employment.GetContract(c).IsActive);
+
+        // Day 40: Inject money into treasury
+        engine.State.MoneyLedger.ExternalCredit(treasuryAccountId, new Money(50000, CurrencyCode.USD), MoneyFlowReason.InitialEndowment);
+
+        // Advance past day 40: Terminated contract arrears repaid!
+        engine.AdvanceBy(SimulationDuration.FromDays(10));
+        Assert.Equal(0, payroll.AccruedUnpaidWagesMinorUnits);
+        Assert.Equal(50000, engine.State.MoneyLedger.GetBalance(pAcc).MinorUnits);
+        Assert.Equal(0, engine.State.MoneyLedger.GetBalance(treasuryAccountId).MinorUnits);
+    }
+
+    [Fact]
+    public void Tick_PreservesMoneySupplyInvariant_AtAllTimes()
+    {
+        var engine = new SimulationEngine(new SimulationEngineOptions
+        {
+            WorldSeed = 12345,
+            Currency = CurrencyCode.USD,
+        });
+
+        var companyEntityId = engine.EntityIds.Allocate();
+        var companyId = new CompanyId(companyEntityId);
+        var treasuryAccountId = new AccountId(engine.EntityIds.Allocate());
+        engine.State.MoneyLedger.CreateAccount(treasuryAccountId, companyEntityId);
+        engine.State.MoneyLedger.ExternalCredit(treasuryAccountId, new Money(100000, CurrencyCode.USD), MoneyFlowReason.InitialEndowment);
+        var company = new Company(companyId, "Test Company", treasuryAccountId);
+        engine.State.Companies.CreateCompany(company, engine.State.MoneyLedger);
+
+        var comp = new CompensationTerms(30000, 10, CurrencyCode.USD);
+        var pos = new JobPositionId(engine.EntityIds.Allocate());
+        engine.State.Companies.AddPosition(new JobPosition(pos, companyId, JobRoleCode.GeneralWorker, comp));
+
+        var hId = new HouseholdId(engine.EntityIds.Allocate());
+        var hAcc = new AccountId(engine.EntityIds.Allocate());
+        engine.State.Population.CreateHousehold(hId, hAcc);
+        engine.State.MoneyLedger.CreateAccount(hAcc, hId.EntityId);
+
+        var p = new PersonId(engine.EntityIds.Allocate());
+        var pAcc = new AccountId(engine.EntityIds.Allocate());
+        engine.State.MoneyLedger.CreateAccount(pAcc, p.EntityId);
+        engine.State.Population.AddPerson(Person.WithAge(p, hId, 30, 0, pAcc));
+
+        var c = new EmploymentContractId(engine.EntityIds.Allocate());
+        engine.State.Employment.CreateContract(new EmploymentContract(c, p, companyId, pos, 0, comp), engine.State.Population, engine.State.Companies);
+
+        var system = new PayrollSystem();
+        engine.Scheduler.Register(system, new SchedulingPolicy(SimulationInstant.Epoch, SimulationDuration.FromDays(1)));
+
+        var creditsBefore = engine.State.MoneyLedger.TotalExternalCredits;
+        var debitsBefore = engine.State.MoneyLedger.TotalExternalDebits;
+
+        engine.AdvanceBy(SimulationDuration.FromDays(100));
+
+        Assert.Equal(creditsBefore, engine.State.MoneyLedger.TotalExternalCredits);
+        Assert.Equal(debitsBefore, engine.State.MoneyLedger.TotalExternalDebits);
+        Assert.True(engine.State.MoneyLedger.VerifySupplyAccounting());
+    }
 }

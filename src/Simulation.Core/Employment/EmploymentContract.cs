@@ -67,14 +67,34 @@ public readonly struct EmploymentContract : IEquatable<EmploymentContract>
         long startDayIndex,
         CompensationTerms compensation)
     {
+        if (id.IsNone)
+        {
+            throw new ArgumentException("EmploymentContract ID cannot be None.", nameof(id));
+        }
+
+        if (personId.IsNone)
+        {
+            throw new ArgumentException("Person ID cannot be None.", nameof(personId));
+        }
+
+        if (companyId.IsNone)
+        {
+            throw new ArgumentException("Company ID cannot be None.", nameof(companyId));
+        }
+
+        if (jobPositionId.IsNone)
+        {
+            throw new ArgumentException("JobPosition ID cannot be None.", nameof(jobPositionId));
+        }
+
         if (startDayIndex < 0)
         {
             throw new ArgumentOutOfRangeException(nameof(startDayIndex), "Start day index cannot be negative.");
         }
 
-        if (compensation.IsUnspecified)
+        if (!compensation.IsValidForPosition)
         {
-            throw new ArgumentException("Compensation terms cannot be Unspecified.", nameof(compensation));
+            throw new ArgumentException("Compensation terms must be valid for a position.", nameof(compensation));
         }
 
         Id = id;
@@ -89,7 +109,7 @@ public readonly struct EmploymentContract : IEquatable<EmploymentContract>
     public bool IsNone => Id.IsNone;
 
     public static EmploymentContract None => new(
-        EmploymentContractId.None, PersonId.None, CompanyId.None, JobPositionId.None, 0,
+        EmploymentContractId.None, PersonId.None, CompanyId.None, JobPositionId.None, 0, null,
         CompensationTerms.Unspecified);
 
     /// <summary>

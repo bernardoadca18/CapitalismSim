@@ -121,11 +121,15 @@ public sealed class CompaniesState
     public bool PositionExists(JobPositionId positionId) => _positions.ContainsKey(positionId);
 
     /// <summary>
-    /// Removes a job position.
+    /// Removes a job position. The position must not be currently occupied by an active contract.
     /// </summary>
-    /// <exception cref="InvalidOperationException">Position doesn't exist.</exception>
-    public void RemovePosition(JobPositionId positionId)
+    /// <param name="positionId">The position to remove.</param>
+    /// <param name="employment">The employment state to verify position occupancy.</param>
+    /// <exception cref="InvalidOperationException">Position doesn't exist or is currently occupied.</exception>
+    public void RemovePosition(JobPositionId positionId, Employment.EmploymentState employment)
     {
+        ArgumentNullException.ThrowIfNull(employment);
+
         if (positionId.IsNone)
         {
             throw new ArgumentException("Cannot remove JobPositionId.None.", nameof(positionId));
@@ -135,6 +139,12 @@ public sealed class CompaniesState
         if (position.IsNone)
         {
             throw new InvalidOperationException($"Job position {positionId} does not exist.");
+        }
+
+        if (employment.IsPositionOccupied(positionId))
+        {
+            throw new InvalidOperationException(
+                $"Cannot remove job position {positionId}: position is occupied by an active employment contract.");
         }
 
         var company = GetCompany(position.CompanyId);

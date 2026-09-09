@@ -13,9 +13,7 @@ namespace CapitalismSim.Simulation.Persistence.Snapshots;
 /// a freshly constructed <see cref="SimulationEngine"/>.
 /// </summary>
 /// <remarks>
-/// The caller is responsible for constructing a new <see cref="SimulationEngine"/>
-/// with the same <see cref="SimulationEngineOptions.WorldSeed"/> as the
-/// snapshot before calling <see cref="Apply"/>.
+/// Validates all invariants and integrity before mutating any state.
 /// </remarks>
 public static class SimulationSnapshotReader
 {
@@ -23,11 +21,6 @@ public static class SimulationSnapshotReader
     /// Validates the snapshot's format version and applies its state onto
     /// <paramref name="engine"/>.
     /// </summary>
-    /// <exception cref="SnapshotFormatException">
-    /// The snapshot's format version is not supported, its world seed
-    /// does not match the target engine's world seed, or any snapshot field
-    /// contains an invalid value.
-    /// </exception>
     public static void Apply(SimulationEngine engine, SimulationSnapshotDto snapshot)
     {
         ArgumentNullException.ThrowIfNull(engine);
@@ -36,7 +29,10 @@ public static class SimulationSnapshotReader
         ValidateFormatVersion(snapshot.FormatVersion);
         ValidateKernelSnapshot(snapshot.Kernel);
 
-        // Phase 2 snapshot validation (optional for backwards compatibility)
+        // 1. Global entity id uniqueness and allocator cursor validation
+        ValidateGlobalEntitiesAndCursor(snapshot);
+
+        // 2. Domain-level structural validations
         if (snapshot.Population is not null)
         {
             ValidatePopulationSnapshot(snapshot.Population);
@@ -47,13 +43,6 @@ public static class SimulationSnapshotReader
             ValidateMoneyLedgerSnapshot(snapshot.MoneyLedger);
         }
 
-        // Cross-reference validation between Population and MoneyLedger
-        if (snapshot.Population is not null && snapshot.MoneyLedger is not null)
-        {
-            ValidateCrossReferences(snapshot.Population, snapshot.MoneyLedger);
-        }
-
-        // Phase 3 validation (when present)
         if (snapshot.Companies is not null)
         {
             ValidateCompaniesSnapshot(snapshot.Companies);
@@ -64,21 +53,12 @@ public static class SimulationSnapshotReader
             ValidateEmploymentSnapshot(snapshot.Employment);
         }
 
-        // Cross-reference validation for Phase 3
-        if (snapshot.Companies is not null && snapshot.Employment is not null)
-        {
-            ValidateCompaniesEmploymentCrossReferences(snapshot.Companies, snapshot.Employment);
-        }
+        // 3. Cross-domain reconciliation and ownership validations
+        ValidateCrossReferencesAndOwnership(snapshot);
 
-        if (snapshot.Population is not null && snapshot.Employment is not null)
-        {
-            ValidatePopulationEmploymentCrossReferences(snapshot.Population, snapshot.Employment);
-        }
-
-        // Apply kernel state
+        // All validations passed! Now apply kernel and domain state.
         ApplyKernel(engine, snapshot.Kernel);
 
-        // Apply Phase 2 state if present
         if (snapshot.Population is not null)
         {
             ApplyPopulation(engine, snapshot.Population);
@@ -89,7 +69,6 @@ public static class SimulationSnapshotReader
             ApplyMoneyLedger(engine, snapshot.MoneyLedger);
         }
 
-        // Apply Phase 3 state if present
         if (snapshot.Companies is not null)
         {
             ApplyCompanies(engine, snapshot.Companies);
@@ -97,7 +76,7 @@ public static class SimulationSnapshotReader
 
         if (snapshot.Employment is not null)
         {
-            ApplyEmployment(engine, snapshot.Employment, snapshot.Companies);
+            ApplyEmployment(engine, snapshot.Employment);
         }
     }
 
@@ -133,95 +112,98 @@ public static class SimulationSnapshotReader
         }
     }
 
-    private static void ApplyKernel(SimulationEngine engine, KernelStateDto kernel)
+    private static void ValidateGlobalEntitiesAndCursor(SimulationSnapshotDto snapshot)
     {
-        if (kernel.WorldSeed != engine.WorldSeed)
+        var globalEntities = new HashSet<long>();
+        long maxDeclaredEntityId = 0;
+
+        void RegisterDeclaredId(long id, string kind)
         {
-            throw new SnapshotFormatException(
-                $"Snapshot world seed ({kernel.WorldSeed}) does not match target engine's " +
-                $"world seed ({engine.WorldSeed}). Construct engine with snapshot's seed before restoring.");
-        }
-
-        engine.Clock.Restore(new SimulationInstant(kernel.CurrentInstantSeconds));
-        engine.EntityIds.Restore(kernel.NextEntityId);
-        engine.Events.RestoreSequenceNumber(kernel.NextEventSequenceNumber);
-    }
-
-    private static void ApplyPopulation(SimulationEngine engine, PopulationSnapshotDto population)
-    {
-        var state = engine.State.Population;
-
-        // Create households first (persons reference them)
-        foreach (var household in population.Households)
-        {
-            state.CreateHousehold(
-                new HouseholdId(new EntityId(household.HouseholdId)),
-                new AccountId(new EntityId(household.AccountId)));
-        }
-
-        // Add individuals
-        foreach (var person in population.Individuals)
-        {
-            var p = new Person(
-                new PersonId(new EntityId(person.PersonId)),
-                new HouseholdId(new EntityId(person.HouseholdId)),
-                person.BirthDayIndex,
-                person.PersonalAccountId > 0
-                    ? new AccountId(new EntityId(person.PersonalAccountId))
-                    : AccountId.None);
-            state.AddPerson(p);
-        }
-
-        // Add cohorts
-        foreach (var cohort in population.Cohorts)
-        {
-            var c = new PopulationCohort(
-                new PopulationCohortId(new EntityId(cohort.CohortId)),
-                cohort.Count,
-                cohort.HouseholdId > 0
-                    ? new HouseholdId(new EntityId(cohort.HouseholdId))
-                    : HouseholdId.None);
-            state.SetCohort(c);
-        }
-
-        // Restore household needs states
-        if (population.HouseholdNeeds is not null)
-        {
-            var currency = engine.State.MoneyLedger.Currency;
-            foreach (var needs in population.HouseholdNeeds)
+            if (id <= 0)
             {
-                var householdId = new HouseholdId(new EntityId(needs.HouseholdId));
-                var profile = new BasicNeedsProfile(
-                    new Money(needs.DailyEssentialCostPerMember, currency),
-                    new Money(needs.DailyHousingCost, currency),
-                    new Money(needs.DailyUtilitiesCost, currency));
+                throw new SnapshotFormatException(
+                    $"{kind} has invalid entity ID {id}; real entity IDs must be strictly positive (> 0).");
+            }
 
-                var household = state.GetHousehold(householdId);
-                if (household is not null)
+            if (!globalEntities.Add(id))
+            {
+                throw new SnapshotFormatException(
+                    $"Entity ID collision detected for ID {id} ({kind}); duplicate or shared entity declaration across domains.");
+            }
+
+            if (id > maxDeclaredEntityId)
+            {
+                maxDeclaredEntityId = id;
+            }
+        }
+
+        if (snapshot.Population is not null)
+        {
+            if (snapshot.Population.Individuals is not null)
+            {
+                foreach (var p in snapshot.Population.Individuals)
                 {
-                    var needsState = new HouseholdNeedsState(householdId, profile, household.MemberCount);
-                    // Restore shortfall tracking directly from snapshot
-                    needsState.Restore(
-                        needs.ConsecutiveShortfallDays,
-                        new Money(needs.CumulativeShortfall, currency));
+                    RegisterDeclaredId(p.PersonId, "Person");
+                }
+            }
 
-                    state.SetHouseholdNeedsState(needsState);
+            if (snapshot.Population.Households is not null)
+            {
+                foreach (var h in snapshot.Population.Households)
+                {
+                    RegisterDeclaredId(h.HouseholdId, "Household");
+                }
+            }
+
+            if (snapshot.Population.Cohorts is not null)
+            {
+                foreach (var c in snapshot.Population.Cohorts)
+                {
+                    RegisterDeclaredId(c.CohortId, "Cohort");
                 }
             }
         }
-    }
 
-    private static void ApplyMoneyLedger(SimulationEngine engine, MoneyLedgerSnapshotDto moneyLedger)
-    {
-        var ledger = engine.State.MoneyLedger;
+        if (snapshot.MoneyLedger is not null && snapshot.MoneyLedger.Accounts is not null)
+        {
+            foreach (var a in snapshot.MoneyLedger.Accounts)
+            {
+                RegisterDeclaredId(a.AccountId, "Account");
+            }
+        }
 
-        // Prepare account data for direct restoration
-        var accounts = moneyLedger.Accounts.Select(a =>
-            (new AccountId(new EntityId(a.AccountId)),
-             new EntityId(a.OwnerId),
-             a.BalanceMinorUnits));
+        if (snapshot.Companies is not null)
+        {
+            if (snapshot.Companies.Companies is not null)
+            {
+                foreach (var c in snapshot.Companies.Companies)
+                {
+                    RegisterDeclaredId(c.CompanyId, "Company");
+                }
+            }
 
-        ledger.Restore(accounts, moneyLedger.TotalExternalCredits, moneyLedger.TotalExternalDebits);
+            if (snapshot.Companies.JobPositions is not null)
+            {
+                foreach (var p in snapshot.Companies.JobPositions)
+                {
+                    RegisterDeclaredId(p.JobPositionId, "JobPosition");
+                }
+            }
+        }
+
+        if (snapshot.Employment is not null && snapshot.Employment.Contracts is not null)
+        {
+            foreach (var c in snapshot.Employment.Contracts)
+            {
+                RegisterDeclaredId(c.EmploymentContractId, "EmploymentContract");
+            }
+        }
+
+        if (snapshot.Kernel.NextEntityId <= maxDeclaredEntityId)
+        {
+            throw new SnapshotFormatException(
+                $"Kernel NextEntityId ({snapshot.Kernel.NextEntityId}) must be strictly greater than max declared EntityId ({maxDeclaredEntityId}).");
+        }
     }
 
     private static void ValidatePopulationSnapshot(PopulationSnapshotDto population)
@@ -243,25 +225,37 @@ public static class SimulationSnapshotReader
 
         foreach (var person in population.Individuals)
         {
-            if (person.PersonId < 0)
+            if (person.PersonId <= 0)
             {
                 throw new SnapshotFormatException(
-                    $"Person snapshot has invalid PersonId {person.PersonId}; must be non-negative.");
+                    $"Person snapshot has invalid PersonId {person.PersonId}; must be positive (> 0).");
+            }
+
+            if (person.HouseholdId < 0)
+            {
+                throw new SnapshotFormatException(
+                    $"Person {person.PersonId} has invalid HouseholdId {person.HouseholdId}; must be non-negative (0 = none).");
+            }
+
+            if (person.PersonalAccountId < 0)
+            {
+                throw new SnapshotFormatException(
+                    $"Person {person.PersonId} has invalid PersonalAccountId {person.PersonalAccountId}; must be non-negative (0 = none).");
             }
         }
 
         foreach (var household in population.Households)
         {
-            if (household.HouseholdId < 0)
+            if (household.HouseholdId <= 0)
             {
                 throw new SnapshotFormatException(
-                    $"Household snapshot has invalid HouseholdId {household.HouseholdId}; must be non-negative.");
+                    $"Household snapshot has invalid HouseholdId {household.HouseholdId}; must be positive (> 0).");
             }
 
-            if (household.AccountId < 0)
+            if (household.AccountId <= 0)
             {
                 throw new SnapshotFormatException(
-                    $"Household snapshot has invalid AccountId {household.AccountId}; must be non-negative.");
+                    $"Household {household.HouseholdId} snapshot has invalid AccountId {household.AccountId}; must be positive (> 0).");
             }
 
             if (household.MemberIds is null)
@@ -272,37 +266,50 @@ public static class SimulationSnapshotReader
 
             foreach (var memberId in household.MemberIds)
             {
-                if (memberId < 0)
+                if (memberId <= 0)
                 {
                     throw new SnapshotFormatException(
-                        $"Household {household.HouseholdId} snapshot has invalid MemberId {memberId}; must be non-negative.");
+                        $"Household {household.HouseholdId} snapshot has invalid MemberId {memberId}; must be positive (> 0).");
                 }
             }
         }
 
         foreach (var cohort in population.Cohorts)
         {
-            if (cohort.CohortId < 0)
+            if (cohort.CohortId <= 0)
             {
                 throw new SnapshotFormatException(
-                    $"Cohort snapshot has invalid CohortId {cohort.CohortId}; must be non-negative.");
+                    $"Cohort snapshot has invalid CohortId {cohort.CohortId}; must be positive (> 0).");
             }
 
             if (cohort.Count < 0)
             {
                 throw new SnapshotFormatException(
-                    $"Cohort snapshot has invalid Count {cohort.Count}; must be non-negative.");
+                    $"Cohort {cohort.CohortId} snapshot has invalid Count {cohort.Count}; must be non-negative.");
+            }
+
+            if (cohort.HouseholdId < 0)
+            {
+                throw new SnapshotFormatException(
+                    $"Cohort {cohort.CohortId} snapshot has invalid HouseholdId {cohort.HouseholdId}; must be non-negative (0 = unattached).");
             }
         }
 
         if (population.HouseholdNeeds is not null)
         {
+            var seenNeedsHouseholds = new HashSet<long>();
             foreach (var needs in population.HouseholdNeeds)
             {
-                if (needs.HouseholdId < 0)
+                if (needs.HouseholdId <= 0)
                 {
                     throw new SnapshotFormatException(
-                        $"HouseholdNeeds snapshot has invalid HouseholdId {needs.HouseholdId}; must be non-negative.");
+                        $"HouseholdNeeds snapshot has invalid HouseholdId {needs.HouseholdId}; must be positive (> 0).");
+                }
+
+                if (!seenNeedsHouseholds.Add(needs.HouseholdId))
+                {
+                    throw new SnapshotFormatException(
+                        $"Duplicate HouseholdNeeds state detected for HouseholdId {needs.HouseholdId}.");
                 }
 
                 if (needs.DailyEssentialCostPerMember < 0)
@@ -358,16 +365,16 @@ public static class SimulationSnapshotReader
 
         foreach (var account in moneyLedger.Accounts)
         {
-            if (account.AccountId < 0)
+            if (account.AccountId <= 0)
             {
                 throw new SnapshotFormatException(
-                    $"Account snapshot has invalid AccountId {account.AccountId}; must be non-negative.");
+                    $"Account snapshot has invalid AccountId {account.AccountId}; must be positive (> 0).");
             }
 
-            if (account.OwnerId < 0)
+            if (account.OwnerId <= 0)
             {
                 throw new SnapshotFormatException(
-                    $"Account snapshot has invalid OwnerId {account.OwnerId}; must be non-negative.");
+                    $"Account snapshot has invalid OwnerId {account.OwnerId}; must be positive (> 0).");
             }
 
             if (account.BalanceMinorUnits < 0)
@@ -390,55 +397,6 @@ public static class SimulationSnapshotReader
         }
     }
 
-    private static void ValidateCrossReferences(PopulationSnapshotDto population, MoneyLedgerSnapshotDto moneyLedger)
-    {
-        var householdIds = new HashSet<long>(population.Households.Select(h => h.HouseholdId));
-        var accountIds = new HashSet<long>(moneyLedger.Accounts.Select(a => a.AccountId));
-
-        // Validate persons reference existing households
-        foreach (var person in population.Individuals)
-        {
-            if (person.HouseholdId > 0 && !householdIds.Contains(person.HouseholdId))
-            {
-                throw new SnapshotFormatException(
-                    $"Person {person.PersonId} references non-existent household {person.HouseholdId}.");
-            }
-        }
-
-        // Validate households reference existing accounts
-        foreach (var household in population.Households)
-        {
-            if (!accountIds.Contains(household.AccountId))
-            {
-                throw new SnapshotFormatException(
-                    $"Household {household.HouseholdId} references non-existent account {household.AccountId}.");
-            }
-        }
-
-        // Validate cohorts reference existing households (0 means unattached)
-        foreach (var cohort in population.Cohorts)
-        {
-            if (cohort.HouseholdId > 0 && !householdIds.Contains(cohort.HouseholdId))
-            {
-                throw new SnapshotFormatException(
-                    $"Cohort {cohort.CohortId} references non-existent household {cohort.HouseholdId}.");
-            }
-        }
-
-        // Validate household needs reference existing households
-        if (population.HouseholdNeeds is not null)
-        {
-            foreach (var needs in population.HouseholdNeeds)
-            {
-                if (!householdIds.Contains(needs.HouseholdId))
-                {
-                    throw new SnapshotFormatException(
-                        $"HouseholdNeeds references non-existent household {needs.HouseholdId}.");
-                }
-            }
-        }
-    }
-
     private static void ValidateCompaniesSnapshot(CompaniesSnapshotDto companies)
     {
         if (companies.Companies is null)
@@ -453,10 +411,10 @@ public static class SimulationSnapshotReader
 
         foreach (var company in companies.Companies)
         {
-            if (company.CompanyId < 0)
+            if (company.CompanyId <= 0)
             {
                 throw new SnapshotFormatException(
-                    $"Company snapshot has invalid CompanyId {company.CompanyId}; must be non-negative.");
+                    $"Company snapshot has invalid CompanyId {company.CompanyId}; must be positive (> 0).");
             }
 
             if (string.IsNullOrWhiteSpace(company.Name))
@@ -465,27 +423,31 @@ public static class SimulationSnapshotReader
                     $"Company {company.CompanyId} has null or empty Name.");
             }
 
-            if (company.TreasuryAccountId < 0)
+            if (company.Name.Length > Company.MaxNameLength)
             {
                 throw new SnapshotFormatException(
-                    $"Company {company.CompanyId} has invalid TreasuryAccountId {company.TreasuryAccountId}; must be non-negative.");
+                    $"Company {company.CompanyId} Name exceeds maximum length of {Company.MaxNameLength} characters.");
+            }
+
+            if (company.TreasuryAccountId <= 0)
+            {
+                throw new SnapshotFormatException(
+                    $"Company {company.CompanyId} has invalid TreasuryAccountId {company.TreasuryAccountId}; must be positive (> 0).");
             }
         }
 
-        var companyIds = new HashSet<long>(companies.Companies.Select(c => c.CompanyId));
-
         foreach (var position in companies.JobPositions)
         {
-            if (position.JobPositionId < 0)
+            if (position.JobPositionId <= 0)
             {
                 throw new SnapshotFormatException(
-                    $"JobPosition snapshot has invalid JobPositionId {position.JobPositionId}; must be non-negative.");
+                    $"JobPosition snapshot has invalid JobPositionId {position.JobPositionId}; must be positive (> 0).");
             }
 
-            if (!companyIds.Contains(position.CompanyId))
+            if (position.CompanyId <= 0)
             {
                 throw new SnapshotFormatException(
-                    $"JobPosition {position.JobPositionId} references non-existent company {position.CompanyId}.");
+                    $"JobPosition {position.JobPositionId} has invalid CompanyId {position.CompanyId}; must be positive (> 0).");
             }
 
             if (string.IsNullOrWhiteSpace(position.JobRoleCode))
@@ -494,16 +456,22 @@ public static class SimulationSnapshotReader
                     $"JobPosition {position.JobPositionId} has null or empty JobRoleCode.");
             }
 
-            if (position.PayAmountMinorUnits < 0)
+            if (position.JobRoleCode.Length > JobRoleCode.MaxLength)
             {
                 throw new SnapshotFormatException(
-                    $"JobPosition {position.JobPositionId} has invalid PayAmountMinorUnits {position.PayAmountMinorUnits}; must be non-negative.");
+                    $"JobPosition {position.JobPositionId} JobRoleCode exceeds maximum length of {JobRoleCode.MaxLength} characters.");
+            }
+
+            if (position.PayAmountMinorUnits <= 0)
+            {
+                throw new SnapshotFormatException(
+                    $"JobPosition {position.JobPositionId} has invalid PayAmountMinorUnits {position.PayAmountMinorUnits}; must be positive (> 0). Zero-pay positions are rejected.");
             }
 
             if (position.PayIntervalDays <= 0)
             {
                 throw new SnapshotFormatException(
-                    $"JobPosition {position.JobPositionId} has invalid PayIntervalDays {position.PayIntervalDays}; must be positive.");
+                    $"JobPosition {position.JobPositionId} has invalid PayIntervalDays {position.PayIntervalDays}; must be positive (> 0).");
             }
 
             if (string.IsNullOrWhiteSpace(position.Currency))
@@ -534,28 +502,28 @@ public static class SimulationSnapshotReader
 
         foreach (var contract in employment.Contracts)
         {
-            if (contract.EmploymentContractId < 0)
+            if (contract.EmploymentContractId <= 0)
             {
                 throw new SnapshotFormatException(
-                    $"EmploymentContract snapshot has invalid EmploymentContractId {contract.EmploymentContractId}; must be non-negative.");
+                    $"EmploymentContract snapshot has invalid EmploymentContractId {contract.EmploymentContractId}; must be positive (> 0).");
             }
 
-            if (contract.PersonId < 0)
+            if (contract.PersonId <= 0)
             {
                 throw new SnapshotFormatException(
-                    $"EmploymentContract {contract.EmploymentContractId} has invalid PersonId {contract.PersonId}; must be non-negative.");
+                    $"EmploymentContract {contract.EmploymentContractId} has invalid PersonId {contract.PersonId}; must be positive (> 0).");
             }
 
-            if (contract.CompanyId < 0)
+            if (contract.CompanyId <= 0)
             {
                 throw new SnapshotFormatException(
-                    $"EmploymentContract {contract.EmploymentContractId} has invalid CompanyId {contract.CompanyId}; must be non-negative.");
+                    $"EmploymentContract {contract.EmploymentContractId} has invalid CompanyId {contract.CompanyId}; must be positive (> 0).");
             }
 
-            if (contract.JobPositionId < 0)
+            if (contract.JobPositionId <= 0)
             {
                 throw new SnapshotFormatException(
-                    $"EmploymentContract {contract.EmploymentContractId} has invalid JobPositionId {contract.JobPositionId}; must be non-negative.");
+                    $"EmploymentContract {contract.EmploymentContractId} has invalid JobPositionId {contract.JobPositionId}; must be positive (> 0).");
             }
 
             if (contract.StartDayIndex < 0)
@@ -570,16 +538,22 @@ public static class SimulationSnapshotReader
                     $"EmploymentContract {contract.EmploymentContractId} has invalid EndDayIndex {contract.EndDayIndex}; must be -1 (active) or >= 0 (terminated).");
             }
 
-            if (contract.PayAmountMinorUnits < 0)
+            if (contract.EndDayIndex >= 0 && contract.EndDayIndex < contract.StartDayIndex)
             {
                 throw new SnapshotFormatException(
-                    $"EmploymentContract {contract.EmploymentContractId} has invalid PayAmountMinorUnits {contract.PayAmountMinorUnits}; must be non-negative.");
+                    $"EmploymentContract {contract.EmploymentContractId} EndDayIndex ({contract.EndDayIndex}) cannot be before StartDayIndex ({contract.StartDayIndex}).");
+            }
+
+            if (contract.PayAmountMinorUnits <= 0)
+            {
+                throw new SnapshotFormatException(
+                    $"EmploymentContract {contract.EmploymentContractId} has invalid PayAmountMinorUnits {contract.PayAmountMinorUnits}; must be positive (> 0). Zero-pay contracts are rejected.");
             }
 
             if (contract.PayIntervalDays <= 0)
             {
                 throw new SnapshotFormatException(
-                    $"EmploymentContract {contract.EmploymentContractId} has invalid PayIntervalDays {contract.PayIntervalDays}; must be positive.");
+                    $"EmploymentContract {contract.EmploymentContractId} has invalid PayIntervalDays {contract.PayIntervalDays}; must be positive (> 0).");
             }
 
             if (string.IsNullOrWhiteSpace(contract.Currency))
@@ -595,14 +569,28 @@ public static class SimulationSnapshotReader
             }
         }
 
-        var contractIds = new HashSet<long>(employment.Contracts.Select(c => c.EmploymentContractId));
+        // Validate 1:1 cardinality between Contracts and PayrollStates
+        var contractIdSet = new HashSet<long>(employment.Contracts.Select(c => c.EmploymentContractId));
+        var payrollContractIdSet = new HashSet<long>();
 
         foreach (var payroll in employment.PayrollStates)
         {
-            if (!contractIds.Contains(payroll.EmploymentContractId))
+            if (payroll.EmploymentContractId <= 0)
             {
                 throw new SnapshotFormatException(
-                    $"PayrollState references non-existent contract {payroll.EmploymentContractId}.");
+                    $"PayrollState has invalid EmploymentContractId {payroll.EmploymentContractId}; must be positive (> 0).");
+            }
+
+            if (!payrollContractIdSet.Add(payroll.EmploymentContractId))
+            {
+                throw new SnapshotFormatException(
+                    $"Duplicate PayrollState detected for contract {payroll.EmploymentContractId}.");
+            }
+
+            if (!contractIdSet.Contains(payroll.EmploymentContractId))
+            {
+                throw new SnapshotFormatException(
+                    $"PayrollState references non-existent contract {payroll.EmploymentContractId} (orphan payroll).");
             }
 
             if (payroll.AccruedUnpaidWagesMinorUnits < 0)
@@ -623,48 +611,307 @@ public static class SimulationSnapshotReader
                     $"PayrollState for contract {payroll.EmploymentContractId} has invalid NextPayDayIndex {payroll.NextPayDayIndex}; must be non-negative.");
             }
         }
-    }
 
-    private static void ValidateCompaniesEmploymentCrossReferences(CompaniesSnapshotDto companies, EmploymentSnapshotDto employment)
-    {
-        var companyIds = new HashSet<long>(companies.Companies.Select(c => c.CompanyId));
-        var jobPositionIds = new HashSet<long>(companies.JobPositions.Select(p => p.JobPositionId));
-
-        foreach (var contract in employment.Contracts)
+        foreach (var contractId in contractIdSet)
         {
-            if (!companyIds.Contains(contract.CompanyId))
+            if (!payrollContractIdSet.Contains(contractId))
             {
                 throw new SnapshotFormatException(
-                    $"EmploymentContract {contract.EmploymentContractId} references non-existent company {contract.CompanyId}.");
-            }
-
-            if (!jobPositionIds.Contains(contract.JobPositionId))
-            {
-                throw new SnapshotFormatException(
-                    $"EmploymentContract {contract.EmploymentContractId} references non-existent job position {contract.JobPositionId}.");
+                    $"EmploymentContract {contractId} has no corresponding PayrollState (missing payroll).");
             }
         }
     }
 
-    private static void ValidatePopulationEmploymentCrossReferences(PopulationSnapshotDto population, EmploymentSnapshotDto employment)
+    private static void ValidateCrossReferencesAndOwnership(SimulationSnapshotDto snapshot)
     {
-        var personIds = new HashSet<long>(population.Individuals.Select(p => p.PersonId));
+        var population = snapshot.Population;
+        var moneyLedger = snapshot.MoneyLedger;
+        var companies = snapshot.Companies;
+        var employment = snapshot.Employment;
 
-        foreach (var contract in employment.Contracts)
+        var personIds = population is not null
+            ? new HashSet<long>(population.Individuals.Select(p => p.PersonId))
+            : new HashSet<long>();
+
+        var householdIds = population is not null
+            ? new HashSet<long>(population.Households.Select(h => h.HouseholdId))
+            : new HashSet<long>();
+
+        var accountOwnerMap = moneyLedger is not null
+            ? moneyLedger.Accounts.ToDictionary(a => a.AccountId, a => a.OwnerId)
+            : new Dictionary<long, long>();
+
+        var companyIds = companies is not null
+            ? new HashSet<long>(companies.Companies.Select(c => c.CompanyId))
+            : new HashSet<long>();
+
+        var positionMap = companies is not null
+            ? companies.JobPositions.ToDictionary(p => p.JobPositionId)
+            : new Dictionary<long, JobPositionSnapshotDto>();
+
+        // 1. Money supply accounting reconciliation
+        if (moneyLedger is not null)
         {
-            if (!personIds.Contains(contract.PersonId))
+            long sumBalances = 0;
+            foreach (var account in moneyLedger.Accounts)
+            {
+                sumBalances = checked(sumBalances + account.BalanceMinorUnits);
+            }
+
+            long expectedSupply = checked(moneyLedger.TotalExternalCredits - moneyLedger.TotalExternalDebits);
+            if (sumBalances != expectedSupply)
             {
                 throw new SnapshotFormatException(
-                    $"EmploymentContract {contract.EmploymentContractId} references non-existent person {contract.PersonId}.");
+                    $"Money supply reconciliation failed: sum of account balances ({sumBalances}) does not match net external supply ({expectedSupply} = credits {moneyLedger.TotalExternalCredits} - debits {moneyLedger.TotalExternalDebits}).");
             }
         }
+
+        // 2. Population cross-references and ownership
+        if (population is not null)
+        {
+            foreach (var person in population.Individuals)
+            {
+                if (person.HouseholdId > 0 && !householdIds.Contains(person.HouseholdId))
+                {
+                    throw new SnapshotFormatException(
+                        $"Person {person.PersonId} references non-existent household {person.HouseholdId}.");
+                }
+
+                if (person.PersonalAccountId > 0)
+                {
+                    if (!accountOwnerMap.TryGetValue(person.PersonalAccountId, out var owner))
+                    {
+                        throw new SnapshotFormatException(
+                            $"Person {person.PersonId} references non-existent personal account {person.PersonalAccountId}.");
+                    }
+
+                    if (owner != person.PersonId)
+                    {
+                        throw new SnapshotFormatException(
+                            $"Personal account {person.PersonalAccountId} for person {person.PersonId} is owned by {owner}, expected {person.PersonId}.");
+                    }
+                }
+            }
+
+            foreach (var household in population.Households)
+            {
+                if (!accountOwnerMap.TryGetValue(household.AccountId, out var owner))
+                {
+                    throw new SnapshotFormatException(
+                        $"Household {household.HouseholdId} references non-existent account {household.AccountId}.");
+                }
+
+                if (owner != household.HouseholdId)
+                {
+                    throw new SnapshotFormatException(
+                        $"Household account {household.AccountId} for household {household.HouseholdId} is owned by {owner}, expected {household.HouseholdId}.");
+                }
+
+                foreach (var memberId in household.MemberIds)
+                {
+                    if (!personIds.Contains(memberId))
+                    {
+                        throw new SnapshotFormatException(
+                            $"Household {household.HouseholdId} references non-existent member person {memberId}.");
+                    }
+                }
+            }
+
+            foreach (var cohort in population.Cohorts)
+            {
+                if (cohort.HouseholdId > 0 && !householdIds.Contains(cohort.HouseholdId))
+                {
+                    throw new SnapshotFormatException(
+                        $"Cohort {cohort.CohortId} references non-existent household {cohort.HouseholdId}.");
+                }
+            }
+
+            if (population.HouseholdNeeds is not null)
+            {
+                foreach (var needs in population.HouseholdNeeds)
+                {
+                    if (!householdIds.Contains(needs.HouseholdId))
+                    {
+                        throw new SnapshotFormatException(
+                            $"HouseholdNeeds references non-existent household {needs.HouseholdId}.");
+                    }
+                }
+            }
+        }
+
+        // 3. Companies ownership, position references, and currency
+        if (companies is not null)
+        {
+            foreach (var company in companies.Companies)
+            {
+                if (!accountOwnerMap.TryGetValue(company.TreasuryAccountId, out var owner))
+                {
+                    throw new SnapshotFormatException(
+                        $"Company {company.CompanyId} references non-existent treasury account {company.TreasuryAccountId}.");
+                }
+
+                if (owner != company.CompanyId)
+                {
+                    throw new SnapshotFormatException(
+                        $"Company treasury account {company.TreasuryAccountId} for company {company.CompanyId} is owned by {owner}, expected {company.CompanyId}.");
+                }
+            }
+
+            foreach (var position in companies.JobPositions)
+            {
+                if (!companyIds.Contains(position.CompanyId))
+                {
+                    throw new SnapshotFormatException(
+                        $"JobPosition {position.JobPositionId} references non-existent company {position.CompanyId}.");
+                }
+
+                if (moneyLedger is not null && position.Currency != moneyLedger.Currency)
+                {
+                    throw new SnapshotFormatException(
+                        $"JobPosition {position.JobPositionId} currency '{position.Currency}' does not match ledger currency '{moneyLedger.Currency}'.");
+                }
+            }
+        }
+
+        // 4. Employment cross-references, occupancy, and currency
+        if (employment is not null)
+        {
+            var activeOccupiedPositions = new HashSet<long>();
+
+            foreach (var contract in employment.Contracts)
+            {
+                if (!personIds.Contains(contract.PersonId))
+                {
+                    throw new SnapshotFormatException(
+                        $"EmploymentContract {contract.EmploymentContractId} references non-existent person {contract.PersonId}.");
+                }
+
+                if (!companyIds.Contains(contract.CompanyId))
+                {
+                    throw new SnapshotFormatException(
+                        $"EmploymentContract {contract.EmploymentContractId} references non-existent company {contract.CompanyId}.");
+                }
+
+                if (!positionMap.TryGetValue(contract.JobPositionId, out var position))
+                {
+                    throw new SnapshotFormatException(
+                        $"EmploymentContract {contract.EmploymentContractId} references non-existent job position {contract.JobPositionId}.");
+                }
+
+                if (position.CompanyId != contract.CompanyId)
+                {
+                    throw new SnapshotFormatException(
+                        $"EmploymentContract {contract.EmploymentContractId} company {contract.CompanyId} does not match position's owning company {position.CompanyId}.");
+                }
+
+                if (moneyLedger is not null && contract.Currency != moneyLedger.Currency)
+                {
+                    throw new SnapshotFormatException(
+                        $"EmploymentContract {contract.EmploymentContractId} currency '{contract.Currency}' does not match ledger currency '{moneyLedger.Currency}'.");
+                }
+
+                // Check active occupancy: at most one active contract per position
+                if (contract.EndDayIndex == -1) // active
+                {
+                    if (!activeOccupiedPositions.Add(contract.JobPositionId))
+                    {
+                        throw new SnapshotFormatException(
+                            $"Position {contract.JobPositionId} is occupied by multiple active employment contracts in snapshot.");
+                    }
+                }
+            }
+        }
+    }
+
+    private static void ApplyKernel(SimulationEngine engine, KernelStateDto kernel)
+    {
+        if (kernel.WorldSeed != engine.WorldSeed)
+        {
+            throw new SnapshotFormatException(
+                $"Snapshot world seed ({kernel.WorldSeed}) does not match target engine's " +
+                $"world seed ({engine.WorldSeed}). Construct engine with snapshot's seed before restoring.");
+        }
+
+        engine.Clock.Restore(new SimulationInstant(kernel.CurrentInstantSeconds));
+        engine.EntityIds.Restore(kernel.NextEntityId);
+        engine.Events.RestoreSequenceNumber(kernel.NextEventSequenceNumber);
+    }
+
+    private static void ApplyPopulation(SimulationEngine engine, PopulationSnapshotDto population)
+    {
+        var state = engine.State.Population;
+
+        foreach (var household in population.Households)
+        {
+            state.CreateHousehold(
+                new HouseholdId(new EntityId(household.HouseholdId)),
+                new AccountId(new EntityId(household.AccountId)));
+        }
+
+        foreach (var person in population.Individuals)
+        {
+            var p = new Person(
+                new PersonId(new EntityId(person.PersonId)),
+                new HouseholdId(new EntityId(person.HouseholdId)),
+                person.BirthDayIndex,
+                person.PersonalAccountId > 0
+                    ? new AccountId(new EntityId(person.PersonalAccountId))
+                    : AccountId.None);
+            state.AddPerson(p);
+        }
+
+        foreach (var cohort in population.Cohorts)
+        {
+            var c = new PopulationCohort(
+                new PopulationCohortId(new EntityId(cohort.CohortId)),
+                cohort.Count,
+                cohort.HouseholdId > 0
+                    ? new HouseholdId(new EntityId(cohort.HouseholdId))
+                    : HouseholdId.None);
+            state.SetCohort(c);
+        }
+
+        if (population.HouseholdNeeds is not null)
+        {
+            var currency = engine.State.MoneyLedger.Currency;
+            foreach (var needs in population.HouseholdNeeds)
+            {
+                var householdId = new HouseholdId(new EntityId(needs.HouseholdId));
+                var profile = new BasicNeedsProfile(
+                    new Money(needs.DailyEssentialCostPerMember, currency),
+                    new Money(needs.DailyHousingCost, currency),
+                    new Money(needs.DailyUtilitiesCost, currency));
+
+                var household = state.GetHousehold(householdId);
+                if (household is not null)
+                {
+                    var needsState = new HouseholdNeedsState(householdId, profile, household.MemberCount);
+                    needsState.Restore(
+                        needs.ConsecutiveShortfallDays,
+                        new Money(needs.CumulativeShortfall, currency));
+
+                    state.SetHouseholdNeedsState(needsState);
+                }
+            }
+        }
+    }
+
+    private static void ApplyMoneyLedger(SimulationEngine engine, MoneyLedgerSnapshotDto moneyLedger)
+    {
+        var ledger = engine.State.MoneyLedger;
+
+        var accounts = moneyLedger.Accounts.Select(a =>
+            (new AccountId(new EntityId(a.AccountId)),
+             new EntityId(a.OwnerId),
+             a.BalanceMinorUnits));
+
+        ledger.Restore(accounts, moneyLedger.TotalExternalCredits, moneyLedger.TotalExternalDebits);
     }
 
     private static void ApplyCompanies(SimulationEngine engine, CompaniesSnapshotDto companies)
     {
         var state = engine.State.Companies;
 
-        // Restore companies first (positions reference companies)
         foreach (var companyDto in companies.Companies)
         {
             var company = new Company(
@@ -672,11 +919,9 @@ public static class SimulationSnapshotReader
                 companyDto.Name,
                 new AccountId(new EntityId(companyDto.TreasuryAccountId)));
 
-            // Use internal restoration to bypass validation (treasury account validation requires ledger state)
             state.RestoreCompany(company);
         }
 
-        // Restore job positions
         foreach (var positionDto in companies.JobPositions)
         {
             var currency = new CurrencyCode(positionDto.Currency);
@@ -694,11 +939,10 @@ public static class SimulationSnapshotReader
         }
     }
 
-    private static void ApplyEmployment(SimulationEngine engine, EmploymentSnapshotDto employment, CompaniesSnapshotDto? companies)
+    private static void ApplyEmployment(SimulationEngine engine, EmploymentSnapshotDto employment)
     {
         var state = engine.State.Employment;
 
-        // Restore employment contracts
         foreach (var contractDto in employment.Contracts)
         {
             var currency = new CurrencyCode(contractDto.Currency);
@@ -714,7 +958,6 @@ public static class SimulationSnapshotReader
                 contractDto.StartDayIndex,
                 compensation);
 
-            // -1 = active (null EndDayIndex), >= 0 = terminated on that day
             if (contractDto.EndDayIndex >= 0)
             {
                 contract = contract.WithEndDayIndex(contractDto.EndDayIndex);
@@ -723,19 +966,16 @@ public static class SimulationSnapshotReader
             state.RestoreContract(contract);
         }
 
-        // Restore payroll states
         foreach (var payrollDto in employment.PayrollStates)
         {
             var contractId = new EmploymentContractId(new EntityId(payrollDto.EmploymentContractId));
-            var payroll = state.GetPayrollState(contractId);
+            var payroll = new PayrollState(contractId, payrollDto.NextPayDayIndex);
+            payroll.Restore(
+                payrollDto.AccruedUnpaidWagesMinorUnits,
+                payrollDto.ConsecutiveMissedPayPeriods,
+                payrollDto.NextPayDayIndex);
 
-            if (payroll is not null)
-            {
-                payroll.Restore(
-                    payrollDto.AccruedUnpaidWagesMinorUnits,
-                    payrollDto.ConsecutiveMissedPayPeriods,
-                    payrollDto.NextPayDayIndex);
-            }
+            state.RestorePayrollState(payroll);
         }
     }
 }

@@ -179,36 +179,90 @@ static int RunPhase3(HeadlessOptions options)
     Console.WriteLine($"Seed: {options.Seed}");
     Console.WriteLine($"Duration: {options.DurationDays} days");
 
-    var scenario = Phase3Scenario.Create(options.Seed);
-    var summary = scenario.GetSummary();
+    Phase3Scenario scenario;
+    if (options.LoadPath is not null)
+    {
+        Console.WriteLine($"Loading snapshot from: {options.LoadPath}");
+        var store = new JsonFileSimulationSnapshotStore();
+        var snapshot = store.Load(options.LoadPath);
+        scenario = Phase3Scenario.FromSnapshot(snapshot);
+    }
+    else
+    {
+        scenario = Phase3Scenario.Create(options.Seed);
+    }
+
+    var initialSummary = scenario.GetSummary();
 
     Console.WriteLine();
     Console.WriteLine("Initial state:");
-    Console.WriteLine($"  Households: {summary.TotalHouseholds}");
-    Console.WriteLine($"  Persons: {summary.TotalPersons}");
-    Console.WriteLine($"  Companies: {summary.TotalCompanies}");
-    Console.WriteLine($"  Job positions: {summary.TotalJobPositions}");
-    Console.WriteLine($"  Employment contracts: {summary.TotalContracts}");
-    Console.WriteLine($"  Active contracts: {summary.ActiveContracts}");
-    Console.WriteLine($"  Household money supply: {summary.TotalHouseholdMoneySupply}");
-    Console.WriteLine($"  Company treasury: {summary.TotalCompanyTreasury}");
-    Console.WriteLine($"  Supply accounting valid: {summary.SupplyAccountingValid}");
+    Console.WriteLine($"  Households: {initialSummary.TotalHouseholds}");
+    Console.WriteLine($"  Persons: {initialSummary.TotalPersons}");
+    Console.WriteLine($"  Companies: {initialSummary.TotalCompanies}");
+    Console.WriteLine($"  Job positions: {initialSummary.TotalJobPositions}");
+    Console.WriteLine($"  Employment contracts: {initialSummary.TotalContracts}");
+    Console.WriteLine($"  Active contracts: {initialSummary.ActiveContracts}");
+    Console.WriteLine($"  Household shared balance: {initialSummary.TotalHouseholdSharedBalance}");
+    Console.WriteLine($"  Personal accounts balance: {initialSummary.TotalPersonalBalance}");
+    Console.WriteLine($"  Company treasury: {initialSummary.TotalCompanyTreasury}");
+    Console.WriteLine($"  Total ledger balance: {initialSummary.TotalLedgerBalance}");
+    Console.WriteLine($"  Supply accounting valid: {initialSummary.SupplyAccountingValid}");
 
+    long initialAllocated = GC.GetAllocatedBytesForCurrentThread();
     var sw = Stopwatch.StartNew();
-    scenario.AdvanceByDays(options.DurationDays);
+    long executedSystems = scenario.Engine.AdvanceBy(SimulationDuration.FromDays(options.DurationDays));
     sw.Stop();
+    long allocatedBytes = GC.GetAllocatedBytesForCurrentThread() - initialAllocated;
 
-    summary = scenario.GetSummary();
+    if (options.SavePath is not null)
+    {
+        Console.WriteLine($"Saving snapshot to: {options.SavePath}");
+        var store = new JsonFileSimulationSnapshotStore();
+        var snapshot = SimulationSnapshotWriter.Capture(scenario.Engine);
+        store.Save(options.SavePath, snapshot);
+    }
+
+    var summary = scenario.GetSummary();
 
     Console.WriteLine();
     Console.WriteLine($"Final state (after {sw.ElapsedMilliseconds}ms):");
+    Console.WriteLine($"  Seed: {scenario.Engine.WorldSeed}");
+    Console.WriteLine($"  Simulated days: {options.DurationDays}");
+    Console.WriteLine($"  Detailed persons: {summary.DetailedPersons}");
+    Console.WriteLine($"  Aggregate population: {summary.AggregatePopulation}");
+    Console.WriteLine($"  Households: {summary.TotalHouseholds}");
+    Console.WriteLine($"  Companies: {summary.TotalCompanies}");
+    Console.WriteLine($"  Job positions: {summary.TotalJobPositions}");
     Console.WriteLine($"  Total contracts: {summary.TotalContracts}");
     Console.WriteLine($"  Active contracts: {summary.ActiveContracts}");
-    Console.WriteLine($"  Household money supply: {summary.TotalHouseholdMoneySupply}");
+    Console.WriteLine($"  Terminated contracts: {summary.TerminatedContracts}");
+    Console.WriteLine($"  Household shared balance: {summary.TotalHouseholdSharedBalance}");
+    Console.WriteLine($"  Personal account balances: {summary.TotalPersonalBalance}");
     Console.WriteLine($"  Company treasury: {summary.TotalCompanyTreasury}");
-    Console.WriteLine($"  Unpaid wages: {summary.TotalUnpaidWages}");
+    Console.WriteLine($"  Total ledger balance: {summary.TotalLedgerBalance}");
+    Console.WriteLine($"  External credits: {summary.TotalExternalCredits}");
+    Console.WriteLine($"  External debits: {summary.TotalExternalDebits}");
+    Console.WriteLine($"  Total wage arrears: {summary.TotalUnpaidWages}");
     Console.WriteLine($"  Contracts in arrears: {summary.ContractsInArrears}");
     Console.WriteLine($"  Supply accounting valid: {summary.SupplyAccountingValid}");
+    Console.WriteLine($"  Integrity valid: {summary.IntegrityValid}");
+    Console.WriteLine($"  System executions: {executedSystems}");
+    Console.WriteLine($"  Canonical fingerprint: {summary.CanonicalFingerprint}");
+    Console.WriteLine($"  Wall time: {sw.ElapsedMilliseconds}ms");
+    Console.WriteLine($"  Allocated bytes: {allocatedBytes}");
+
+    if (!summary.IntegrityValid)
+    {
+        Console.WriteLine();
+        Console.WriteLine("Integrity violations:");
+        foreach (var violation in summary.IntegrityViolations)
+        {
+            Console.WriteLine($"  - {violation}");
+        }
+        Console.WriteLine();
+        Console.WriteLine("Result: FAIL (integrity violations)");
+        return 1;
+    }
 
     Console.WriteLine();
     Console.WriteLine("Result: PASS");
@@ -230,16 +284,10 @@ static int RunPhase3VerifyDeterminism(HeadlessOptions options)
     scenarioB.AdvanceByDays(options.DurationDays);
     var summaryB = scenarioB.GetSummary();
 
-    Console.WriteLine($"Run A - Household: {summaryA.TotalHouseholdMoneySupply}, Company: {summaryA.TotalCompanyTreasury}, Unpaid: {summaryA.TotalUnpaidWages}");
-    Console.WriteLine($"Run B - Household: {summaryB.TotalHouseholdMoneySupply}, Company: {summaryB.TotalCompanyTreasury}, Unpaid: {summaryB.TotalUnpaidWages}");
+    Console.WriteLine($"Run A fingerprint: {summaryA.CanonicalFingerprint}");
+    Console.WriteLine($"Run B fingerprint: {summaryB.CanonicalFingerprint}");
 
-    bool match = summaryA.TotalHouseholdMoneySupply == summaryB.TotalHouseholdMoneySupply
-        && summaryA.TotalCompanyTreasury == summaryB.TotalCompanyTreasury
-        && summaryA.TotalUnpaidWages == summaryB.TotalUnpaidWages
-        && summaryA.ContractsInArrears == summaryB.ContractsInArrears
-        && summaryA.SupplyAccountingValid == summaryB.SupplyAccountingValid;
-
-    if (match)
+    if (summaryA.CanonicalFingerprint == summaryB.CanonicalFingerprint)
     {
         Console.WriteLine("Result: PASS (Phase 3 state matches)");
         return 0;
@@ -261,72 +309,46 @@ static int RunPhase3VerifySaveLoad(HeadlessOptions options)
     scenario1.AdvanceByDays(options.DurationDays);
     var summary1 = scenario1.GetSummary();
 
-    // Run 2: Split run - first half
+    // Run 2: Split run (save/load)
+    int firstHalf = options.DurationDays == 365 ? 173 : options.DurationDays / 2;
+    int secondHalf = options.DurationDays - firstHalf;
+
     var scenario2First = Phase3Scenario.Create(options.Seed);
-    scenario2First.AdvanceByDays(options.DurationDays / 2);
+    scenario2First.AdvanceByDays(firstHalf);
 
-    // Save snapshot using SimulationSnapshotWriter directly (captures full Phase 3 state)
+    var store = new JsonFileSimulationSnapshotStore();
     var snapshotPath = Path.Combine(Path.GetTempPath(), $"verify-phase3-saveload-{Guid.NewGuid():N}.json");
-    var snapshot = SimulationSnapshotWriter.Capture(scenario2First.Engine);
-    var jsonOptions = new System.Text.Json.JsonSerializerOptions { WriteIndented = true };
-    string json = System.Text.Json.JsonSerializer.Serialize(snapshot, jsonOptions);
-    File.WriteAllText(snapshotPath, json);
 
-    // Load snapshot and continue using Phase3Scenario.FromSnapshot
-    json = File.ReadAllText(snapshotPath);
-    var loadedSnapshot = System.Text.Json.JsonSerializer.Deserialize<SimulationSnapshotDto>(json, jsonOptions)
-        ?? throw new InvalidOperationException("Failed to deserialize snapshot.");
-
-    // Restore scenario with systems registered
-    var scenario2Second = Phase3Scenario.FromSnapshot(loadedSnapshot);
-
-    // Continue the simulation
-    scenario2Second.AdvanceByDays(options.DurationDays - (options.DurationDays / 2));
-
-    // Capture state from split run
-    var summary2 = scenario2Second.GetSummary();
-
-    // Cleanup temp file
-    File.Delete(snapshotPath);
-
-    // Compare
-    Console.WriteLine("Continuous run:");
-    Console.WriteLine($"  Household money: {summary1.TotalHouseholdMoneySupply}");
-    Console.WriteLine($"  Company treasury: {summary1.TotalCompanyTreasury}");
-    Console.WriteLine($"  Unpaid wages: {summary1.TotalUnpaidWages}");
-    Console.WriteLine($"  Contracts in arrears: {summary1.ContractsInArrears}");
-
-    Console.WriteLine();
-    Console.WriteLine("Split run (save/load):");
-    Console.WriteLine($"  Household money: {summary2.TotalHouseholdMoneySupply}");
-    Console.WriteLine($"  Company treasury: {summary2.TotalCompanyTreasury}");
-    Console.WriteLine($"  Unpaid wages: {summary2.TotalUnpaidWages}");
-    Console.WriteLine($"  Contracts in arrears: {summary2.ContractsInArrears}");
-
-    Console.WriteLine();
-
-    bool allMatch = summary1.TotalHouseholdMoneySupply.MinorUnits == summary2.TotalHouseholdMoneySupply.MinorUnits
-        && summary1.TotalCompanyTreasury.MinorUnits == summary2.TotalCompanyTreasury.MinorUnits
-        && summary1.TotalUnpaidWages.MinorUnits == summary2.TotalUnpaidWages.MinorUnits
-        && summary1.ContractsInArrears == summary2.ContractsInArrears;
-
-    if (allMatch)
+    try
     {
-        Console.WriteLine("Result: PASS (all Phase 3 state matches)");
-        return 0;
+        var snapshot = SimulationSnapshotWriter.Capture(scenario2First.Engine);
+        store.Save(snapshotPath, snapshot);
+
+        var loadedSnapshot = store.Load(snapshotPath);
+        var scenario2Second = Phase3Scenario.FromSnapshot(loadedSnapshot);
+        scenario2Second.AdvanceByDays(secondHalf);
+
+        var summary2 = scenario2Second.GetSummary();
+
+        Console.WriteLine($"Continuous run fingerprint: {summary1.CanonicalFingerprint}");
+        Console.WriteLine($"Split run (save/load) fp:   {summary2.CanonicalFingerprint}");
+
+        if (summary1.CanonicalFingerprint == summary2.CanonicalFingerprint)
+        {
+            Console.WriteLine("Result: PASS (all Phase 3 state matches)");
+            return 0;
+        }
+
+        Console.WriteLine("Result: FAIL (state mismatch)");
+        return 1;
     }
-
-    Console.WriteLine("Result: FAIL (state mismatch)");
-    if (summary1.TotalHouseholdMoneySupply.MinorUnits != summary2.TotalHouseholdMoneySupply.MinorUnits)
-        Console.WriteLine($"  - Household money differs: {summary1.TotalHouseholdMoneySupply.MinorUnits} vs {summary2.TotalHouseholdMoneySupply.MinorUnits}");
-    if (summary1.TotalCompanyTreasury.MinorUnits != summary2.TotalCompanyTreasury.MinorUnits)
-        Console.WriteLine($"  - Company treasury differs: {summary1.TotalCompanyTreasury.MinorUnits} vs {summary2.TotalCompanyTreasury.MinorUnits}");
-    if (summary1.TotalUnpaidWages.MinorUnits != summary2.TotalUnpaidWages.MinorUnits)
-        Console.WriteLine($"  - Unpaid wages differ: {summary1.TotalUnpaidWages.MinorUnits} vs {summary2.TotalUnpaidWages.MinorUnits}");
-    if (summary1.ContractsInArrears != summary2.ContractsInArrears)
-        Console.WriteLine($"  - Contracts in arrears differ: {summary1.ContractsInArrears} vs {summary2.ContractsInArrears}");
-
-    return 1;
+    finally
+    {
+        if (File.Exists(snapshotPath))
+        {
+            try { File.Delete(snapshotPath); } catch { }
+        }
+    }
 }
 
 static int RunVerifySaveLoad(HeadlessOptions options)

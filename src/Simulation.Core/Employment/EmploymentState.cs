@@ -11,8 +11,8 @@ namespace CapitalismSim.Simulation.Core.Employment;
 /// <remarks>
 /// Design invariants:
 /// - Each employment contract has a unique EmploymentContractId
-/// - A person can have multiple employment contracts (past and present)
-///   but at most one active contract per company
+/// - A person can have multiple employment contracts (past and present),
+///   including across different companies or multiple positions in the same company
 /// - An active contract references a valid person, company, and job position
 /// - Each contract has a corresponding payroll state
 /// - A job position can have at most one active contract at a time
@@ -38,6 +38,13 @@ public sealed class EmploymentState
 
     /// <summary>Gets all contract IDs.</summary>
     public IEnumerable<EmploymentContractId> GetAllContractIds() => _contracts.Keys;
+
+    /// <summary>Checks whether a job position is occupied by an active contract.</summary>
+    public bool IsPositionOccupied(JobPositionId positionId) => _positionOccupancy.ContainsKey(positionId);
+
+    /// <summary>Gets the contract ID occupying a job position, or EmploymentContractId.None.</summary>
+    public EmploymentContractId GetOccupyingContractId(JobPositionId positionId) =>
+        _positionOccupancy.TryGetValue(positionId, out var id) ? id : EmploymentContractId.None;
 
     /// <summary>
     /// Creates a new employment contract and initializes its payroll state.
@@ -287,17 +294,21 @@ public sealed class EmploymentState
     {
         _contracts[contract.Id] = contract;
 
-        // Initialize payroll state if not already present
-        if (!_payrollStates.ContainsKey(contract.Id))
-        {
-            _payrollStates[contract.Id] = new PayrollState(contract.Id, contract.StartDayIndex + contract.PayIntervalDays);
-        }
-
         // Track position occupancy for active contracts
         if (contract.IsActive)
         {
             _positionOccupancy[contract.JobPositionId] = contract.Id;
         }
+    }
+
+    /// <summary>
+    /// Restores a payroll state from a snapshot without validation.
+    /// Used by persistence layer to restore state.
+    /// </summary>
+    internal void RestorePayrollState(PayrollState payrollState)
+    {
+        ArgumentNullException.ThrowIfNull(payrollState);
+        _payrollStates[payrollState.ContractId] = payrollState;
     }
 }
 
