@@ -7,6 +7,7 @@ using CapitalismSim.Simulation.Core.Population;
 using CapitalismSim.Simulation.Core.Scheduling;
 using CapitalismSim.Simulation.Core.Systems;
 using CapitalismSim.Simulation.Core.Time;
+using CapitalismSim.Simulation.Persistence.Snapshots;
 
 namespace CapitalismSim.Simulation.Headless.Scenarios;
 
@@ -145,7 +146,7 @@ public sealed class Phase3Scenario
 
                 // Compensation: $5000/pay period (monthly), varying by position
                 long payAmount = 400000 + (p * 50000); // $4000-$6500 per month
-                var compensation = new CompensationTerms(payAmount, 30); // 30-day pay interval
+                var compensation = new CompensationTerms(payAmount, 30, currency); // 30-day pay interval
 
                 var position = new JobPosition(positionId, companyId, JobRoleCode.GeneralWorker, compensation);
                 companies.AddPosition(position);
@@ -185,6 +186,47 @@ public sealed class Phase3Scenario
     public void AdvanceByDays(int days)
     {
         Engine.AdvanceBy(SimulationDuration.FromDays(days));
+    }
+
+    /// <summary>
+    /// Restores a Phase3Scenario from a snapshot, including system re-registration.
+    /// </summary>
+    public static Phase3Scenario FromSnapshot(SimulationSnapshotDto snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+
+        var currency = snapshot.MoneyLedger is not null
+            ? new CurrencyCode(snapshot.MoneyLedger.Currency)
+            : CurrencyCode.USD;
+
+        var engine = new SimulationEngine(new SimulationEngineOptions
+        {
+            WorldSeed = snapshot.Kernel.WorldSeed,
+            StartInstant = SimulationInstant.Epoch,
+            Currency = currency,
+        });
+
+        // Register systems (required before applying snapshot so they're scheduled correctly)
+        var needsSystem = new HouseholdNeedsSystem(currency);
+        engine.Scheduler.Register(needsSystem, new SchedulingPolicy(
+            SimulationInstant.Epoch,
+            SimulationDuration.FromDays(1)));
+
+        var payrollSystem = new PayrollSystem();
+        engine.Scheduler.Register(payrollSystem, new SchedulingPolicy(
+            SimulationInstant.Epoch,
+            SimulationDuration.FromDays(1)));
+
+        // Apply snapshot state
+        SimulationSnapshotReader.Apply(engine, snapshot);
+
+        return new Phase3Scenario
+        {
+            Engine = engine,
+            NeedsSystem = needsSystem,
+            PayrollSystem = payrollSystem,
+            Currency = currency,
+        };
     }
 
     /// <summary>

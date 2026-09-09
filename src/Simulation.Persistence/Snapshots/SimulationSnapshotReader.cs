@@ -505,6 +505,18 @@ public static class SimulationSnapshotReader
                 throw new SnapshotFormatException(
                     $"JobPosition {position.JobPositionId} has invalid PayIntervalDays {position.PayIntervalDays}; must be positive.");
             }
+
+            if (string.IsNullOrWhiteSpace(position.Currency))
+            {
+                throw new SnapshotFormatException(
+                    $"JobPosition {position.JobPositionId} has null or empty Currency.");
+            }
+
+            if (position.Currency.Length != 3)
+            {
+                throw new SnapshotFormatException(
+                    $"JobPosition {position.JobPositionId} has invalid Currency '{position.Currency}'; must be exactly 3 characters.");
+            }
         }
     }
 
@@ -568,6 +580,18 @@ public static class SimulationSnapshotReader
             {
                 throw new SnapshotFormatException(
                     $"EmploymentContract {contract.EmploymentContractId} has invalid PayIntervalDays {contract.PayIntervalDays}; must be positive.");
+            }
+
+            if (string.IsNullOrWhiteSpace(contract.Currency))
+            {
+                throw new SnapshotFormatException(
+                    $"EmploymentContract {contract.EmploymentContractId} has null or empty Currency.");
+            }
+
+            if (contract.Currency.Length != 3)
+            {
+                throw new SnapshotFormatException(
+                    $"EmploymentContract {contract.EmploymentContractId} has invalid Currency '{contract.Currency}'; must be exactly 3 characters.");
             }
         }
 
@@ -655,12 +679,16 @@ public static class SimulationSnapshotReader
         // Restore job positions
         foreach (var positionDto in companies.JobPositions)
         {
+            var currency = new CurrencyCode(positionDto.Currency);
+            var compensation = new CompensationTerms(
+                positionDto.PayAmountMinorUnits,
+                positionDto.PayIntervalDays,
+                currency);
             var position = new JobPosition(
                 new JobPositionId(new EntityId(positionDto.JobPositionId)),
                 new CompanyId(new EntityId(positionDto.CompanyId)),
                 JobRoleCode.FromString(positionDto.JobRoleCode),
-                positionDto.PayAmountMinorUnits,
-                positionDto.PayIntervalDays);
+                compensation);
 
             state.RestorePosition(position);
         }
@@ -673,14 +701,18 @@ public static class SimulationSnapshotReader
         // Restore employment contracts
         foreach (var contractDto in employment.Contracts)
         {
+            var currency = new CurrencyCode(contractDto.Currency);
+            var compensation = new CompensationTerms(
+                contractDto.PayAmountMinorUnits,
+                contractDto.PayIntervalDays,
+                currency);
             var contract = new EmploymentContract(
                 new EmploymentContractId(new EntityId(contractDto.EmploymentContractId)),
                 new PersonId(new EntityId(contractDto.PersonId)),
                 new CompanyId(new EntityId(contractDto.CompanyId)),
                 new JobPositionId(new EntityId(contractDto.JobPositionId)),
                 contractDto.StartDayIndex,
-                contractDto.PayAmountMinorUnits,
-                contractDto.PayIntervalDays);
+                compensation);
 
             // -1 = active (null EndDayIndex), >= 0 = terminated on that day
             if (contractDto.EndDayIndex >= 0)

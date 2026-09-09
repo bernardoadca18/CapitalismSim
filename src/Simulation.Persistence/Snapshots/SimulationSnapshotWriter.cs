@@ -21,7 +21,7 @@ public static class SimulationSnapshotWriter
     /// The snapshot schema version produced by this build.
     /// Increment when making breaking schema changes.
     /// </summary>
-    public const int CurrentFormatVersion = 5;
+    public const int CurrentFormatVersion = 6;
 
     /// <summary>
     /// Captures the complete state of the simulation engine into a snapshot.
@@ -201,6 +201,7 @@ public static class SimulationSnapshotWriter
                     JobRoleCode = position.Role.Value,
                     PayAmountMinorUnits = position.PayAmountMinorUnits,
                     PayIntervalDays = position.PayIntervalDays,
+                    Currency = position.Compensation.Currency.Code,
                 };
             })
             .ToList();
@@ -236,6 +237,7 @@ public static class SimulationSnapshotWriter
                     EndDayIndex = contract.EndDayIndex ?? -1, // -1 = active
                     PayAmountMinorUnits = contract.PayAmountMinorUnits,
                     PayIntervalDays = contract.PayIntervalDays,
+                    Currency = contract.Compensation.Currency.Code,
                 };
             })
             .ToList();

@@ -37,6 +37,9 @@ public readonly struct CurrencyCode : IEquatable<CurrencyCode>
         Code = code;
     }
 
+    /// <summary>Sentinel value representing an unset/invalid currency.</summary>
+    public static CurrencyCode None => default;
+
     public static readonly CurrencyCode USD = new("USD");
     public static readonly CurrencyCode EUR = new("EUR");
     public static readonly CurrencyCode BRL = new("BRL");

@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using CapitalismSim.Simulation.Core.Economics;
+using CapitalismSim.Simulation.Core.Engine;
 using CapitalismSim.Simulation.Core.Time;
 using CapitalismSim.Simulation.Headless.Cli;
 using CapitalismSim.Simulation.Headless.Diagnostics;
@@ -9,6 +11,35 @@ try
 {
     HeadlessOptions options = HeadlessOptions.Parse(args);
 
+    // Phase selection takes precedence over verification flags
+    // so that --phase3 --verify-determinism runs Phase 3 verification
+    if (options.Phase3)
+    {
+        if (options.VerifyDeterminism)
+        {
+            return RunPhase3VerifyDeterminism(options);
+        }
+        if (options.VerifySaveLoad)
+        {
+            return RunPhase3VerifySaveLoad(options);
+        }
+        return RunPhase3(options);
+    }
+
+    if (options.Phase2)
+    {
+        if (options.VerifyDeterminism)
+        {
+            return RunVerifyDeterminism(options);
+        }
+        if (options.VerifySaveLoad)
+        {
+            return RunVerifySaveLoad(options);
+        }
+        return RunPhase2(options);
+    }
+
+    // Legacy/default mode: Phase 2 verification flags
     if (options.VerifyDeterminism)
     {
         return RunVerifyDeterminism(options);
@@ -17,16 +48,6 @@ try
     if (options.VerifySaveLoad)
     {
         return RunVerifySaveLoad(options);
-    }
-
-    if (options.Phase2)
-    {
-        return RunPhase2(options);
-    }
-
-    if (options.Phase3)
-    {
-        return RunPhase3(options);
     }
 
     return RunSingle(options);
@@ -192,6 +213,120 @@ static int RunPhase3(HeadlessOptions options)
     Console.WriteLine();
     Console.WriteLine("Result: PASS");
     return 0;
+}
+
+static int RunPhase3VerifyDeterminism(HeadlessOptions options)
+{
+    Console.WriteLine("=== Phase 3 Determinism Check ===");
+    Console.WriteLine($"Seed: {options.Seed}");
+    Console.WriteLine($"Duration: {options.DurationDays} days");
+    Console.WriteLine();
+
+    var scenarioA = Phase3Scenario.Create(options.Seed);
+    scenarioA.AdvanceByDays(options.DurationDays);
+    var summaryA = scenarioA.GetSummary();
+
+    var scenarioB = Phase3Scenario.Create(options.Seed);
+    scenarioB.AdvanceByDays(options.DurationDays);
+    var summaryB = scenarioB.GetSummary();
+
+    Console.WriteLine($"Run A - Household: {summaryA.TotalHouseholdMoneySupply}, Company: {summaryA.TotalCompanyTreasury}, Unpaid: {summaryA.TotalUnpaidWages}");
+    Console.WriteLine($"Run B - Household: {summaryB.TotalHouseholdMoneySupply}, Company: {summaryB.TotalCompanyTreasury}, Unpaid: {summaryB.TotalUnpaidWages}");
+
+    bool match = summaryA.TotalHouseholdMoneySupply == summaryB.TotalHouseholdMoneySupply
+        && summaryA.TotalCompanyTreasury == summaryB.TotalCompanyTreasury
+        && summaryA.TotalUnpaidWages == summaryB.TotalUnpaidWages
+        && summaryA.ContractsInArrears == summaryB.ContractsInArrears
+        && summaryA.SupplyAccountingValid == summaryB.SupplyAccountingValid;
+
+    if (match)
+    {
+        Console.WriteLine("Result: PASS (Phase 3 state matches)");
+        return 0;
+    }
+
+    Console.WriteLine("Result: FAIL (Phase 3 state differs)");
+    return 1;
+}
+
+static int RunPhase3VerifySaveLoad(HeadlessOptions options)
+{
+    Console.WriteLine("=== Phase 3 Save/Load Verification ===");
+    Console.WriteLine($"Seed: {options.Seed}");
+    Console.WriteLine($"Duration: {options.DurationDays} days");
+    Console.WriteLine();
+
+    // Run 1: Continuous run
+    var scenario1 = Phase3Scenario.Create(options.Seed);
+    scenario1.AdvanceByDays(options.DurationDays);
+    var summary1 = scenario1.GetSummary();
+
+    // Run 2: Split run - first half
+    var scenario2First = Phase3Scenario.Create(options.Seed);
+    scenario2First.AdvanceByDays(options.DurationDays / 2);
+
+    // Save snapshot using SimulationSnapshotWriter directly (captures full Phase 3 state)
+    var snapshotPath = Path.Combine(Path.GetTempPath(), $"verify-phase3-saveload-{Guid.NewGuid():N}.json");
+    var snapshot = SimulationSnapshotWriter.Capture(scenario2First.Engine);
+    var jsonOptions = new System.Text.Json.JsonSerializerOptions { WriteIndented = true };
+    string json = System.Text.Json.JsonSerializer.Serialize(snapshot, jsonOptions);
+    File.WriteAllText(snapshotPath, json);
+
+    // Load snapshot and continue using Phase3Scenario.FromSnapshot
+    json = File.ReadAllText(snapshotPath);
+    var loadedSnapshot = System.Text.Json.JsonSerializer.Deserialize<SimulationSnapshotDto>(json, jsonOptions)
+        ?? throw new InvalidOperationException("Failed to deserialize snapshot.");
+
+    // Restore scenario with systems registered
+    var scenario2Second = Phase3Scenario.FromSnapshot(loadedSnapshot);
+
+    // Continue the simulation
+    scenario2Second.AdvanceByDays(options.DurationDays - (options.DurationDays / 2));
+
+    // Capture state from split run
+    var summary2 = scenario2Second.GetSummary();
+
+    // Cleanup temp file
+    File.Delete(snapshotPath);
+
+    // Compare
+    Console.WriteLine("Continuous run:");
+    Console.WriteLine($"  Household money: {summary1.TotalHouseholdMoneySupply}");
+    Console.WriteLine($"  Company treasury: {summary1.TotalCompanyTreasury}");
+    Console.WriteLine($"  Unpaid wages: {summary1.TotalUnpaidWages}");
+    Console.WriteLine($"  Contracts in arrears: {summary1.ContractsInArrears}");
+
+    Console.WriteLine();
+    Console.WriteLine("Split run (save/load):");
+    Console.WriteLine($"  Household money: {summary2.TotalHouseholdMoneySupply}");
+    Console.WriteLine($"  Company treasury: {summary2.TotalCompanyTreasury}");
+    Console.WriteLine($"  Unpaid wages: {summary2.TotalUnpaidWages}");
+    Console.WriteLine($"  Contracts in arrears: {summary2.ContractsInArrears}");
+
+    Console.WriteLine();
+
+    bool allMatch = summary1.TotalHouseholdMoneySupply.MinorUnits == summary2.TotalHouseholdMoneySupply.MinorUnits
+        && summary1.TotalCompanyTreasury.MinorUnits == summary2.TotalCompanyTreasury.MinorUnits
+        && summary1.TotalUnpaidWages.MinorUnits == summary2.TotalUnpaidWages.MinorUnits
+        && summary1.ContractsInArrears == summary2.ContractsInArrears;
+
+    if (allMatch)
+    {
+        Console.WriteLine("Result: PASS (all Phase 3 state matches)");
+        return 0;
+    }
+
+    Console.WriteLine("Result: FAIL (state mismatch)");
+    if (summary1.TotalHouseholdMoneySupply.MinorUnits != summary2.TotalHouseholdMoneySupply.MinorUnits)
+        Console.WriteLine($"  - Household money differs: {summary1.TotalHouseholdMoneySupply.MinorUnits} vs {summary2.TotalHouseholdMoneySupply.MinorUnits}");
+    if (summary1.TotalCompanyTreasury.MinorUnits != summary2.TotalCompanyTreasury.MinorUnits)
+        Console.WriteLine($"  - Company treasury differs: {summary1.TotalCompanyTreasury.MinorUnits} vs {summary2.TotalCompanyTreasury.MinorUnits}");
+    if (summary1.TotalUnpaidWages.MinorUnits != summary2.TotalUnpaidWages.MinorUnits)
+        Console.WriteLine($"  - Unpaid wages differ: {summary1.TotalUnpaidWages.MinorUnits} vs {summary2.TotalUnpaidWages.MinorUnits}");
+    if (summary1.ContractsInArrears != summary2.ContractsInArrears)
+        Console.WriteLine($"  - Contracts in arrears differ: {summary1.ContractsInArrears} vs {summary2.ContractsInArrears}");
+
+    return 1;
 }
 
 static int RunVerifySaveLoad(HeadlessOptions options)

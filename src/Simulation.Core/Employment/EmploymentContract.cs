@@ -72,9 +72,9 @@ public readonly struct EmploymentContract : IEquatable<EmploymentContract>
             throw new ArgumentOutOfRangeException(nameof(startDayIndex), "Start day index cannot be negative.");
         }
 
-        if (compensation.IsNone)
+        if (compensation.IsUnspecified)
         {
-            throw new ArgumentException("Compensation terms cannot be None.", nameof(compensation));
+            throw new ArgumentException("Compensation terms cannot be Unspecified.", nameof(compensation));
         }
 
         Id = id;
@@ -86,28 +86,11 @@ public readonly struct EmploymentContract : IEquatable<EmploymentContract>
         Compensation = compensation;
     }
 
-    /// <summary>
-    /// Creates a new employment contract with explicit pay fields.
-    /// Convenience overload for backward compatibility.
-    /// </summary>
-    public EmploymentContract(
-        EmploymentContractId id,
-        PersonId personId,
-        CompanyId companyId,
-        JobPositionId jobPositionId,
-        long startDayIndex,
-        long payAmountMinorUnits,
-        int payIntervalDays)
-        : this(id, personId, companyId, jobPositionId, startDayIndex,
-            new CompensationTerms(payAmountMinorUnits, payIntervalDays))
-    {
-    }
-
     public bool IsNone => Id.IsNone;
 
     public static EmploymentContract None => new(
         EmploymentContractId.None, PersonId.None, CompanyId.None, JobPositionId.None, 0,
-        CompensationTerms.None);
+        CompensationTerms.Unspecified);
 
     /// <summary>
     /// Whether this contract is currently active (not terminated).
@@ -122,6 +105,12 @@ public readonly struct EmploymentContract : IEquatable<EmploymentContract>
         if (endDayIndex < 0)
         {
             throw new ArgumentOutOfRangeException(nameof(endDayIndex), "End day index cannot be negative.");
+        }
+
+        if (endDayIndex < StartDayIndex)
+        {
+            throw new ArgumentOutOfRangeException(nameof(endDayIndex),
+                $"End day index ({endDayIndex}) cannot be before start day index ({StartDayIndex}).");
         }
 
         return new EmploymentContract(

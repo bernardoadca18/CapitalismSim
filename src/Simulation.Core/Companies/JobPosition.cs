@@ -77,16 +77,16 @@ public readonly struct JobPosition : IEquatable<JobPosition>
     /// <param name="id">Unique position identifier.</param>
     /// <param name="companyId">The company that owns this position.</param>
     /// <param name="role">The job role for this position.</param>
-    /// <param name="compensation">The compensation terms.</param>
+    /// <param name="compensation">The compensation terms (must not be Unspecified).</param>
     public JobPosition(
         JobPositionId id,
         CompanyId companyId,
         JobRoleCode role,
         CompensationTerms compensation)
     {
-        if (compensation.IsNone)
+        if (compensation.IsUnspecified)
         {
-            throw new ArgumentException("Compensation terms cannot be None.", nameof(compensation));
+            throw new ArgumentException("Compensation terms cannot be Unspecified.", nameof(compensation));
         }
 
         // Note: CompensationTerms validates its own invariants
@@ -97,28 +97,15 @@ public readonly struct JobPosition : IEquatable<JobPosition>
         Compensation = compensation;
     }
 
-    /// <summary>
-    /// Creates a new job position with explicit pay fields.
-    /// Convenience overload for backward compatibility.
-    /// </summary>
-    public JobPosition(
-        JobPositionId id,
-        CompanyId companyId,
-        JobRoleCode role,
-        long payAmountMinorUnits,
-        int payIntervalDays)
-        : this(id, companyId, role, new CompensationTerms(payAmountMinorUnits, payIntervalDays))
-    {
-    }
-
     public bool IsNone => Id.IsNone;
 
-    public static JobPosition None => new(JobPositionId.None, CompanyId.None, JobRoleCode.GeneralWorker, CompensationTerms.Zero(1));
+    /// <summary>Sentinel value representing an unset position.</summary>
+    public static JobPosition None => default;
 
     /// <summary>
-    /// Gets the pay as a Money struct for the given currency.
+    /// Gets the pay as a Money struct.
     /// </summary>
-    public Money GetPayAmount(CurrencyCode currency) => Compensation.GetPayAmount(currency);
+    public Money GetPayAmount() => Compensation.GetPayAmount();
 
     public bool Equals(JobPosition other) =>
         Id.Equals(other.Id) &&

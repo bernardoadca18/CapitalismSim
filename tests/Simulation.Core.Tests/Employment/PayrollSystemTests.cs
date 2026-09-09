@@ -60,7 +60,7 @@ public class PayrollSystemTests
 
         // Create position
         var positionId = new JobPositionId(engine.EntityIds.Allocate());
-        var compensation = new CompensationTerms(50000, 30);
+        var compensation = new CompensationTerms(50000, 30, CurrencyCode.USD);
         var position = new JobPosition(positionId, companyId, JobRoleCode.GeneralWorker, compensation);
         engine.State.Companies.AddPosition(position);
 
@@ -117,7 +117,7 @@ public class PayrollSystemTests
 
         // Create position with $500/month pay
         var positionId = new JobPositionId(engine.EntityIds.Allocate());
-        var compensation = new CompensationTerms(50000, 30); // $500 every 30 days
+        var compensation = new CompensationTerms(50000, 30, CurrencyCode.USD); // $500 every 30 days
         var position = new JobPosition(positionId, companyId, JobRoleCode.GeneralWorker, compensation);
         engine.State.Companies.AddPosition(position);
 
@@ -180,7 +180,7 @@ public class PayrollSystemTests
 
         // Create position with $500/month pay
         var positionId = new JobPositionId(engine.EntityIds.Allocate());
-        var compensation = new CompensationTerms(50000, 30); // $500 every 30 days
+        var compensation = new CompensationTerms(50000, 30, CurrencyCode.USD); // $500 every 30 days
         var position = new JobPosition(positionId, companyId, JobRoleCode.GeneralWorker, compensation);
         engine.State.Companies.AddPosition(position);
 
@@ -245,7 +245,7 @@ public class PayrollSystemTests
 
         // Create position
         var positionId = new JobPositionId(engine.EntityIds.Allocate());
-        var compensation = new CompensationTerms(50000, 30);
+        var compensation = new CompensationTerms(50000, 30, CurrencyCode.USD);
         var position = new JobPosition(positionId, companyId, JobRoleCode.GeneralWorker, compensation);
         engine.State.Companies.AddPosition(position);
 
@@ -315,7 +315,7 @@ public class PayrollSystemTests
 
         // Create position
         var positionId = new JobPositionId(engine.EntityIds.Allocate());
-        var compensation = new CompensationTerms(50000, 30);
+        var compensation = new CompensationTerms(50000, 30, CurrencyCode.USD);
         var position = new JobPosition(positionId, companyId, JobRoleCode.GeneralWorker, compensation);
         engine.State.Companies.AddPosition(position);
 
@@ -369,7 +369,7 @@ public class PayrollSystemTests
         engine.State.Companies.CreateCompany(company, engine.State.MoneyLedger);
 
         // Create 3 positions
-        var compensation = new CompensationTerms(50000, 30);
+        var compensation = new CompensationTerms(50000, 30, CurrencyCode.USD);
         var positionIds = new JobPositionId[3];
         for (int i = 0; i < 3; i++)
         {
@@ -444,7 +444,7 @@ public class PayrollSystemTests
 
         // Create position
         var positionId = new JobPositionId(engine.EntityIds.Allocate());
-        var compensation = new CompensationTerms(50000, 30);
+        var compensation = new CompensationTerms(50000, 30, CurrencyCode.USD);
         var position = new JobPosition(positionId, companyId, JobRoleCode.GeneralWorker, compensation);
         engine.State.Companies.AddPosition(position);
 

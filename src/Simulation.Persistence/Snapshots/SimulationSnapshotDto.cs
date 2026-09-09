@@ -219,6 +219,9 @@ public sealed record JobPositionSnapshotDto
 
     /// <summary>The pay interval in days.</summary>
     public required int PayIntervalDays { get; init; }
+
+    /// <summary>The currency for compensation (ISO 4217-style 3-letter code).</summary>
+    public required string Currency { get; init; }
 }
 
 /// <summary>
@@ -263,6 +266,9 @@ public sealed record EmploymentContractSnapshotDto
 
     /// <summary>The pay interval in days.</summary>
     public required int PayIntervalDays { get; init; }
+
+    /// <summary>The currency for compensation (ISO 4217-style 3-letter code).</summary>
+    public required string Currency { get; init; }
 }
 
 /// <summary>Snapshot of payroll state for a contract.</summary>
